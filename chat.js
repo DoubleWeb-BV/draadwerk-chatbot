@@ -50,10 +50,12 @@
                         body: JSON.stringify({ question: message })
                     });
 
-                    const data = await response.json();
+                    const raw = await response.json();
+                    const text = raw?.[0]?.response?.body?.output || "Geen antwoord ontvangen.";
+
                     const botBubble = document.createElement("div");
                     botBubble.className = "chat-bubble bot-message";
-                    botBubble.innerHTML = data.text || "Geen antwoord ontvangen.";
+                    botBubble.innerHTML = text;
                     chat.appendChild(botBubble);
                     chat.scrollTop = chat.scrollHeight;
                 } catch {

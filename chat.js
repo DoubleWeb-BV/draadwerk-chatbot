@@ -1,4 +1,8 @@
 (function () {
+    // Get environment from localStorage
+    window.chatbotEnv = localStorage.getItem("chatbotEnv") || "live";
+    console.log("[Chatbot] Environment:", window.chatbotEnv);
+
     // Load CSS
     const style = document.createElement("link");
     style.rel = "stylesheet";
@@ -19,7 +23,6 @@
                 box.style.display = (box.style.display === "flex") ? "none" : "flex";
             });
 
-
             const form = document.getElementById("chatForm");
             const chat = document.getElementById("chatMessages");
             const input = document.getElementById("chatInput");
@@ -37,7 +40,7 @@
                 input.value = "";
 
                 try {
-                    const endpoint = window.chatbotEnv === "live"
+                    const endpoint = window.chatbotEnv === "test"
                         ? "https://workflows.draadwerk.nl/webhook-test/draadwerk-chatbot"
                         : "https://workflows.draadwerk.nl/webhook/draadwerk-chatbot";
 

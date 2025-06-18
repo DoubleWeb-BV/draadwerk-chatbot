@@ -51,11 +51,11 @@
                     });
 
                     const raw = await response.json();
-                    const text = raw?.[0]?.response?.body?.output || "Geen antwoord ontvangen.";
+                    const text = raw?.text || "Geen antwoord ontvangen.";
 
                     const botBubble = document.createElement("div");
                     botBubble.className = "chat-bubble bot-message";
-                    botBubble.innerHTML = text;
+                    botBubble.innerHTML = text.replace(/\n/g, "<br>");
                     chat.appendChild(botBubble);
                     chat.scrollTop = chat.scrollHeight;
                 } catch {

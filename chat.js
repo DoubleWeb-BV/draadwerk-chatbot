@@ -37,7 +37,11 @@
                 input.value = "";
 
                 try {
-                    const response = await fetch("https://workflows.draadwerk.nl/webhook/draadwerk-chatbot", {
+                    const endpoint = window.chatbotEnv === "live"
+                        ? "https://workflows.draadwerk.nl/webhook-test/draadwerk-chatbot"
+                        : "https://workflows.draadwerk.nl/webhook/draadwerk-chatbot";
+
+                    const response = await fetch(endpoint, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ question: message })

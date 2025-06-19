@@ -1,27 +1,28 @@
 (function () {
-    console.log("[Chatbot] Loading assets from raw.githubusercontent.com (no caching)");
+    console.log("[Chatbot] Loading CSS and HTML from raw.githubusercontent.com (no caching)");
 
-    const cacheBuster = "?ts=" + Date.now();
-    const cdnBase = "https://raw.githubusercontent.com/DoubleWeb-BV/draadwerk-chatbot/main/";
+    const timestamp = Date.now();
+    const baseURL = "https://raw.githubusercontent.com/DoubleWeb-BV/draadwerk-chatbot/main/";
 
-    // Load CSS (no caching)
-    const style = document.createElement("link");
-    style.rel = "stylesheet";
-    style.href = cdnBase + "chat.css" + cacheBuster;
-    document.head.appendChild(style);
-
-    // Load HTML (no caching)
-    fetch(cdnBase + "chat.html" + cacheBuster)
-        .then(res => {
-            if (!res.ok) throw new Error("Failed to load chatbot HTML");
-            return res.text();
+    // ✅ Laad CSS via <style> tag met fetch (dus geen <link>, volledig vers!)
+    fetch(baseURL + "chat.css?ts=" + timestamp)
+        .then(res => res.text())
+        .then(css => {
+            const style = document.createElement("style");
+            style.textContent = css;
+            document.head.appendChild(style);
         })
+        .catch(err => console.error("[Chatbot] Failed to load CSS:", err));
+
+    // ✅ Laad HTML via fetch
+    fetch(baseURL + "chat.html?ts=" + timestamp)
+        .then(res => res.text())
         .then(html => {
             const wrapper = document.createElement("div");
             wrapper.innerHTML = html;
             document.body.appendChild(wrapper);
 
-            // Open/close logic
+            // Chat toggle logic
             document.getElementById("chatOpenButton").addEventListener("click", function () {
                 const box = document.getElementById("chatBox");
                 const chat = document.getElementById("chatMessages");
@@ -39,7 +40,7 @@
                 }
             });
 
-            // Chat form logic
+            // Chat logic
             const form = document.getElementById("chatForm");
             const chat = document.getElementById("chatMessages");
             const input = document.getElementById("chatInput");
@@ -80,7 +81,5 @@
                 }
             });
         })
-        .catch(err => {
-            console.error("[Chatbot] Error loading HTML:", err);
-        });
+        .catch(err => console.error("[Chatbot] Failed to load HTML:", err));
 })();

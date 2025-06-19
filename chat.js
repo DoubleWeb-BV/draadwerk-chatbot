@@ -20,8 +20,22 @@
             // Setup logic
             document.getElementById("chatOpenButton").addEventListener("click", function () {
                 const box = document.getElementById("chatBox");
-                box.style.display = (box.style.display === "flex") ? "none" : "flex";
+                const chat = document.getElementById("chatMessages");
+
+                const isVisible = box.style.display === "flex";
+                box.style.display = isVisible ? "none" : "flex";
+
+                // Voeg welkomsbericht toe bij eerste keer openen
+                if (!isVisible && !chat.dataset.welcomeShown) {
+                    const welcome = document.createElement("div");
+                    welcome.className = "chat-bubble bot-message";
+                    welcome.innerHTML = `Hoi! 👋 Welkom bij DoubleWeb.<br>
+        Stel gerust je vraag over websites, onderhoud, support of iets anders — ik denk graag met je mee.`;
+                    chat.appendChild(welcome);
+                    chat.dataset.welcomeShown = "true";
+                }
             });
+
 
             const form = document.getElementById("chatForm");
             const chat = document.getElementById("chatMessages");

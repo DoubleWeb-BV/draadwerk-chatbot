@@ -1,3 +1,15 @@
+@font-face {
+    font-family: 'Ubuntu';
+    src: url('Ubuntu-Regular.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+body {
+    font-family: 'Ubuntu', sans-serif;
+}
+
+
 .chat-toggle {
     position: fixed;
     bottom: 20px;
@@ -36,11 +48,16 @@
     overflow-y: auto;
     flex: 1;
     background: #f5f5f5;
+    background: url('background-chat.jpg') no-repeat center center;
+    background-size: cover;
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
 }
 .chat-bubble {
-    padding: 15px 25px;
+    font-size: 18px;
+    padding: 20px 30px;
     border-radius: 20px;
-    margin-bottom: 15px;
     max-width: 80%;
     clear: both;
     word-wrap: break-word;
@@ -48,24 +65,15 @@
 .user-message {
     background: #414141;
     color: white;
-    float: right;
     text-align: right;
     border-radius: 100px;
+    width: max-content;
+    align-self: flex-end;
 }
-.user-message:after{
-    content: '';
-    position: absolute;
-    width: 10px;
-    height: 10px;
-    background-color: #414141;
-    border-radius: 50px;
-    right: 0;
-    bottom: 0px;
-}
+
 
 .bot-message {
     background: #F7FCFB;
-    float: left;
     text-align: left;
     box-shadow: 0px 0px 16px rgba(80, 73, 58, .16);
 }
@@ -86,10 +94,10 @@
 }
 .chat-footer button {
     margin-left: 10px;
-    padding: 10px 20px;
+    padding: 15px 25px;
     border-radius: 20px;
     border: none;
-    background-color: #128C7E;
+    background-color: #F15F27;
     color: white;
     cursor: pointer;
 }

@@ -7,11 +7,11 @@
     // Laad CSS vanaf GitHub via jsDelivr, met cache-bypass
     const style = document.createElement("link");
     style.rel = "stylesheet";
-    style.href = "https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.css" + cacheBuster;
+    style.href = "https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot/chat.css" + cacheBuster;
     document.head.appendChild(style);
 
     // Laad HTML vanaf GitHub via jsDelivr, met cache-bypass
-    fetch("https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.html" + cacheBuster)
+    fetch("https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot/chat.html" + cacheBuster)
         .then(res => {
             if (!res.ok) throw new Error("Failed to load chatbot HTML");
             return res.text();

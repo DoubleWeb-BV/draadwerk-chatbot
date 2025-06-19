@@ -3,14 +3,14 @@
     window.chatbotEnv = localStorage.getItem("chatbotEnv") || "live";
     console.log("[Chatbot] Environment:", window.chatbotEnv);
 
-    // Load CSS
+    // Load latest CSS from GitHub via jsDelivr
     const style = document.createElement("link");
     style.rel = "stylesheet";
-    style.href = "https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@main/chat.css";
+    style.href = "https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.css"; // <-- @latest used here
     document.head.appendChild(style);
 
-    // Load HTML
-    fetch("https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@main/chat.html")
+    // Load latest HTML from GitHub via jsDelivr
+    fetch("https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.html") // <-- @latest used here
         .then(res => res.text())
         .then(html => {
             const wrapper = document.createElement("div");
@@ -25,17 +25,15 @@
                 const isVisible = box.style.display === "flex";
                 box.style.display = isVisible ? "none" : "flex";
 
-                // Voeg welkomsbericht toe bij eerste keer openen
                 if (!isVisible && !chat.dataset.welcomeShown) {
                     const welcome = document.createElement("div");
                     welcome.className = "chat-bubble bot-message";
                     welcome.innerHTML = `Hoi! 👋 Welkom bij DoubleWeb.<br>
-        Stel gerust je vraag over websites, onderhoud, support of iets anders — ik denk graag met je mee.`;
+                        Stel gerust je vraag over websites, onderhoud, support of iets anders — ik denk graag met je mee.`;
                     chat.appendChild(welcome);
                     chat.dataset.welcomeShown = "true";
                 }
             });
-
 
             const form = document.getElementById("chatForm");
             const chat = document.getElementById("chatMessages");

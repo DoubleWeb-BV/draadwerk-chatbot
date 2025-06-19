@@ -1,17 +1,17 @@
 (function () {
-    console.log("[Chatbot] Cache-bypass enabled (no caching)");
+    console.log("[Chatbot] Loading assets from raw.githubusercontent.com (no caching)");
 
-    // Maak een unieke querystring om cache volledig te omzeilen
     const cacheBuster = "?ts=" + Date.now();
+    const cdnBase = "https://raw.githubusercontent.com/DoubleWeb-BV/draadwerk-chatbot/main/";
 
-    // Laad CSS vanaf GitHub via jsDelivr, met cache-bypass
+    // Load CSS (no caching)
     const style = document.createElement("link");
     style.rel = "stylesheet";
-    style.href = "https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot/chat.css" + cacheBuster;
+    style.href = cdnBase + "chat.css" + cacheBuster;
     document.head.appendChild(style);
 
-    // Laad HTML vanaf GitHub via jsDelivr, met cache-bypass
-    fetch("https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot/chat.html" + cacheBuster)
+    // Load HTML (no caching)
+    fetch(cdnBase + "chat.html" + cacheBuster)
         .then(res => {
             if (!res.ok) throw new Error("Failed to load chatbot HTML");
             return res.text();
@@ -39,7 +39,7 @@
                 }
             });
 
-            // Chat interactie
+            // Chat form logic
             const form = document.getElementById("chatForm");
             const chat = document.getElementById("chatMessages");
             const input = document.getElementById("chatInput");
@@ -58,7 +58,6 @@
 
                 try {
                     const endpoint = "https://workflows.draadwerk.nl/webhook/draadwerk-chatbot";
-
                     const response = await fetch(endpoint, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },

@@ -1,23 +1,27 @@
 (function () {
-    // Get environment from localStorage
-    window.chatbotEnv = localStorage.getItem("chatbotEnv") || "live";
-    console.log("[Chatbot] Environment:", window.chatbotEnv);
+    console.log("[Chatbot] Cache-bypass enabled (no caching)");
 
-    // Load latest CSS from GitHub via jsDelivr
+    // Maak een unieke querystring om cache volledig te omzeilen
+    const cacheBuster = "?ts=" + Date.now();
+
+    // Laad CSS vanaf GitHub via jsDelivr, met cache-bypass
     const style = document.createElement("link");
     style.rel = "stylesheet";
-    style.href = "https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.css"; // <-- @latest used here
+    style.href = "https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.css" + cacheBuster;
     document.head.appendChild(style);
 
-    // Load latest HTML from GitHub via jsDelivr
-    fetch("https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.html") // <-- @latest used here
-        .then(res => res.text())
+    // Laad HTML vanaf GitHub via jsDelivr, met cache-bypass
+    fetch("https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.html" + cacheBuster)
+        .then(res => {
+            if (!res.ok) throw new Error("Failed to load chatbot HTML");
+            return res.text();
+        })
         .then(html => {
             const wrapper = document.createElement("div");
             wrapper.innerHTML = html;
             document.body.appendChild(wrapper);
 
-            // Setup logic
+            // Open/close logic
             document.getElementById("chatOpenButton").addEventListener("click", function () {
                 const box = document.getElementById("chatBox");
                 const chat = document.getElementById("chatMessages");
@@ -35,6 +39,7 @@
                 }
             });
 
+            // Chat interactie
             const form = document.getElementById("chatForm");
             const chat = document.getElementById("chatMessages");
             const input = document.getElementById("chatInput");
@@ -52,9 +57,7 @@
                 input.value = "";
 
                 try {
-                    const endpoint = window.chatbotEnv === "test"
-                        ? "https://workflows.draadwerk.nl/webhook-test/draadwerk-chatbot"
-                        : "https://workflows.draadwerk.nl/webhook/draadwerk-chatbot";
+                    const endpoint = "https://workflows.draadwerk.nl/webhook/draadwerk-chatbot";
 
                     const response = await fetch(endpoint, {
                         method: "POST",
@@ -77,5 +80,8 @@
                     chat.appendChild(errBubble);
                 }
             });
+        })
+        .catch(err => {
+            console.error("[Chatbot] Error loading HTML:", err);
         });
 })();

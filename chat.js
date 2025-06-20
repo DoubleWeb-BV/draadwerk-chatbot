@@ -79,12 +79,25 @@
         chat.scrollTop = chat.scrollHeight;
         input.value = "";
 
+        // ✅ Create or reuse session ID
+        const sessionId =
+            localStorage.getItem("chatbotSessionId") ||
+            (() => {
+                const newId = `sess-${Date.now()}-${Math.random().toString(36).substring(2)}`;
+                localStorage.setItem("chatbotSessionId", newId);
+                return newId;
+            })();
+
         try {
             const res = await fetch(webhookURL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ question: msg }),
+                body: JSON.stringify({
+                    question: msg,
+                    sessionId: sessionId  // ✅ Send session ID
+                }),
             });
+
             const { text } = await res.json();
             const bb = document.createElement("div");
             bb.className = "chat-bubble bot-message";

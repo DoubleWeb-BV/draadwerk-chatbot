@@ -4,6 +4,10 @@
     const repo = "DoubleWeb-BV/draadwerk-chatbot";
     const timestamp = Date.now();
 
+    // 🔍 Get userId from script tag
+    const currentScript = document.currentScript;
+    const userId = currentScript?.getAttribute("data-user-id") || null;
+
     // 🔄 1. Haal laatste commit SHA van 'main' branch op
     let sha;
     try {
@@ -94,7 +98,8 @@
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     question: msg,
-                    sessionId: sessionId  // ✅ Send session ID
+                    sessionId: sessionId,
+                    ...(userId && { userId }) // ✅ Include userId only if present
                 }),
             });
 

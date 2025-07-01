@@ -56,7 +56,7 @@
 
     // 🔁 Bepaal juiste omgeving voor webhook
     const env = localStorage.getItem("chatbotEnv") === "test" ? "webhook-test" : "webhook";
-    const webhookURL = `https://workflows.draadwerk.nl/${env}/draadwerk-chatbot`;
+    const webhookURL = `https://workflows.draadwerk.nl/${env}/draadwerk-chatbot-v2`;
     console.log("[Chatbot] Using webhook:", webhookURL);
 
     btn?.addEventListener("click", () => {

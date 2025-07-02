@@ -4,6 +4,12 @@
     const repo = "DoubleWeb-BV/draadwerk-chatbot";
     const timestamp = Date.now();
 
+    // 🔁 Genereer één nieuwe sessionId per paginalaad
+    const sessionId = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+    );
+    console.log("[Chatbot] Generated sessionId:", sessionId);
+
     // 🔍 Get userId from script tag
     const currentScript = document.currentScript;
     const userId = currentScript?.getAttribute("data-user-id") || null;
@@ -83,21 +89,13 @@
     chat.scrollTop = chat.scrollHeight;
     input.value = "";
 
-    // ✅ Altijd een nieuwe sessionId (geen localStorage)
-    function generateUUID() {
-    return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-    );
-}
-    const sessionId = generateUUID();
-
     try {
     const res = await fetch(webhookURL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
     question: msg,
-    sessionId,
+    sessionId, // gebruik vaste sessie voor deze pagina
     ...(userId && { userId })
 }),
 });

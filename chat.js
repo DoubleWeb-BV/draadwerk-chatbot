@@ -1,4 +1,4 @@
-(async function () {
+    (async function () {
     console.log("[Chatbot] Loading fresh CSS and HTML from GitHub");
 
     const repo = "DoubleWeb-BV/draadwerk-chatbot";
@@ -11,37 +11,37 @@
     // 🔄 1. Haal laatste commit SHA van 'main' branch op
     let sha;
     try {
-        const infoRes = await fetch(`https://api.github.com/repos/${repo}/branches/main`);
-        const info = await infoRes.json();
-        sha = info.commit.sha;
-        console.log("[Chatbot] Latest SHA:", sha);
-    } catch (err) {
-        console.error("[Chatbot] Failed to fetch latest SHA, fallback to 'main':", err);
-        sha = "main";
-    }
+    const infoRes = await fetch(`https://api.github.com/repos/${repo}/branches/main`);
+    const info = await infoRes.json();
+    sha = info.commit.sha;
+    console.log("[Chatbot] Latest SHA:", sha);
+} catch (err) {
+    console.error("[Chatbot] Failed to fetch latest SHA, fallback to 'main':", err);
+    sha = "main";
+}
 
     // ✅ 2. Laad chat.css via SHA
     try {
-        const cssURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.css?ts=${timestamp}`;
-        const cssRes = await fetch(cssURL);
-        const css = await cssRes.text();
-        const style = document.createElement("style");
-        style.textContent = css;
-        document.head.appendChild(style);
-    } catch (err) {
-        console.error("[Chatbot] Failed to load fresh CSS:", err);
-    }
+    const cssURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.css?ts=${timestamp}`;
+    const cssRes = await fetch(cssURL);
+    const css = await cssRes.text();
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.appendChild(style);
+} catch (err) {
+    console.error("[Chatbot] Failed to load fresh CSS:", err);
+}
 
     // ✅ 3. Laad chat.html via SHA
     let html;
     try {
-        const htmlURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.html?ts=${timestamp}`;
-        const htmlRes = await fetch(htmlURL);
-        html = await htmlRes.text();
-    } catch (err) {
-        console.error("[Chatbot] Failed to load HTML:", err);
-        return;
-    }
+    const htmlURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.html?ts=${timestamp}`;
+    const htmlRes = await fetch(htmlURL);
+    html = await htmlRes.text();
+} catch (err) {
+    console.error("[Chatbot] Failed to load HTML:", err);
+    return;
+}
 
     const wrapper = document.createElement("div");
     wrapper.innerHTML = html;
@@ -60,66 +60,59 @@
     console.log("[Chatbot] Using webhook:", webhookURL);
 
     btn?.addEventListener("click", () => {
-        const vis = box.style.display === "flex";
-        box.style.display = vis ? "none" : "flex";
-        if (!vis && !chat.dataset.welcomeShown) {
-            const welcome = document.createElement("div");
-            welcome.className = "chat-bubble bot-message";
-            welcome.innerHTML = `Hoi! Welkom bij DoubleWeb.<br> Stel gerust je vraag over websites, onderhoud, support of iets anders ik denk graag met je mee.`;
-            chat.appendChild(welcome);
-            chat.dataset.welcomeShown = "true";
-        }
-    });
+    const vis = box.style.display === "flex";
+    box.style.display = vis ? "none" : "flex";
+    if (!vis && !chat.dataset.welcomeShown) {
+    const welcome = document.createElement("div");
+    welcome.className = "chat-bubble bot-message";
+    welcome.innerHTML = `Hoi! Welkom bij DoubleWeb.<br> Stel gerust je vraag over websites, onderhoud, support of iets anders ik denk graag met je mee.`;
+    chat.appendChild(welcome);
+    chat.dataset.welcomeShown = "true";
+}
+});
 
     form?.addEventListener("submit", async e => {
-        e.preventDefault();
-        const msg = input.value.trim();
-        if (!msg) return;
+    e.preventDefault();
+    const msg = input.value.trim();
+    if (!msg) return;
 
-        const ub = document.createElement("div");
-        ub.className = "chat-bubble user-message";
-        ub.textContent = msg;
-        chat.appendChild(ub);
-        chat.scrollTop = chat.scrollHeight;
-        input.value = "";
+    const ub = document.createElement("div");
+    ub.className = "chat-bubble user-message";
+    ub.textContent = msg;
+    chat.appendChild(ub);
+    chat.scrollTop = chat.scrollHeight;
+    input.value = "";
 
-        // ✅ Create or reuse session ID
-        function generateUUID() {
-            return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-                (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-            );
-        }
+    // ✅ Altijd een nieuwe sessionId (geen localStorage)
+    function generateUUID() {
+    return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+    );
+}
+    const sessionId = generateUUID();
 
-        const sessionId =
-            localStorage.getItem("chatbotSessionId") ||
-            (() => {
-                const newId = generateUUID();
-                localStorage.setItem("chatbotSessionId", newId);
-                return newId;
-            })();
+    try {
+    const res = await fetch(webhookURL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+    question: msg,
+    sessionId,
+    ...(userId && { userId })
+}),
+});
 
-        try {
-            const res = await fetch(webhookURL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    question: msg,
-                    sessionId: sessionId,
-                    ...(userId && { userId }) // ✅ Include userId only if present
-                }),
-            });
-
-            const { text } = await res.json();
-            const bb = document.createElement("div");
-            bb.className = "chat-bubble bot-message";
-            bb.innerHTML = (text || "Geen antwoord ontvangen.").replace(/\n/g, "<br>");
-            chat.appendChild(bb);
-            chat.scrollTop = chat.scrollHeight;
-        } catch {
-            const err = document.createElement("div");
-            err.className = "chat-bubble bot-message";
-            err.textContent = "Er ging iets mis.";
-            chat.appendChild(err);
-        }
-    });
+    const { text } = await res.json();
+    const bb = document.createElement("div");
+    bb.className = "chat-bubble bot-message";
+    bb.innerHTML = (text || "Geen antwoord ontvangen.").replace(/\n/g, "<br>");
+    chat.appendChild(bb);
+    chat.scrollTop = chat.scrollHeight;
+} catch {
+    const err = document.createElement("div");
+    err.className = "chat-bubble bot-message";
+    err.textContent = "Er ging iets mis.";
+    chat.appendChild(err);
+}
+});
 })();

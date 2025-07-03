@@ -93,11 +93,12 @@
     const res = await fetch(webhookURL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-    question: msg,
-    sessionId, // gebruik vaste sessie voor deze pagina
-    ...(userId && { userId })
-}),
+        body: JSON.stringify({
+            question: msg,
+            sessionId, // gebruik vaste sessie voor deze pagina
+            channel: "website", // ✅ nieuw toegevoegd
+            ...(userId && { userId })
+        }),
 });
 
     const { text } = await res.json();

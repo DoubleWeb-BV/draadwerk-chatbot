@@ -32,7 +32,31 @@
     const cssRes = await fetch(cssURL);
     const css = await cssRes.text();
     const style = document.createElement("style");
-    style.textContent = css;
+    style.textContent = css + `
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 30px;
+        }
+        .loading-dot {
+            width: 8px;
+            height: 8px;
+            background-color: #F15F27;
+            border-radius: 50%;
+            display: inline-block;
+            transform: translateY(5px);
+        }
+        .loading.active .loading-dot {
+            animation: bounce 1s infinite ease-in-out;
+        }
+        .loading.active .loading-dot:nth-of-type(1) { animation-delay: 0s; }
+        .loading.active .loading-dot:nth-of-type(2) { animation-delay: 0.2s; }
+        .loading.active .loading-dot:nth-of-type(3) { animation-delay: 0.4s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: translateY(5px); }
+            40% { transform: translateY(-5px); }
+        }`;
     document.head.appendChild(style);
 } catch (err) {
     console.error("[Chatbot] Failed to load fresh CSS:", err);
@@ -60,7 +84,6 @@
     const form = document.getElementById("chatForm");
     const input = document.getElementById("chatInput");
 
-    // 🔁 Bepaal juiste omgeving voor webhook
     const env = localStorage.getItem("chatbotEnv") === "test" ? "webhook-test" : "webhook";
     const webhookURL = `https://workflows.draadwerk.nl/${env}/draadwerk-chatbot-v2`;
     console.log("[Chatbot] Using webhook:", webhookURL);
@@ -71,7 +94,7 @@
     if (!vis && !chat.dataset.welcomeShown) {
     const welcome = document.createElement("div");
     welcome.className = "chat-bubble bot-message";
-    welcome.innerHTML = `Hoi! Welkom bij DoubleWeb.<br> Stel gerust je vraag over websites, onderhoud, support of iets anders ik denk graag met je mee.`;
+    welcome.innerHTML = `Hoi! Welkom bij DoubleWeb.<br>Stel gerust je vraag over websites, onderhoud, support of iets anders – ik denk graag met je mee.`;
     chat.appendChild(welcome);
     chat.dataset.welcomeShown = "true";
 }
@@ -89,25 +112,42 @@
     chat.scrollTop = chat.scrollHeight;
     input.value = "";
 
+    // ⏳ Voeg loading-indicator toe
+    const loading = document.createElement("div");
+    loading.className = "chat-bubble bot-message";
+    loading.innerHTML = `
+            <div class="loading active">
+                <span class="loading-dot"></span>
+                <span class="loading-dot"></span>
+                <span class="loading-dot"></span>
+            </div>`;
+    chat.appendChild(loading);
+    chat.scrollTop = chat.scrollHeight;
+
     try {
     const res = await fetch(webhookURL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            question: msg,
-            sessionId, // gebruik vaste sessie voor deze pagina
-            channel: "website", // ✅ nieuw toegevoegd
-            ...(userId && { userId })
-        }),
+    body: JSON.stringify({
+    question: msg,
+    sessionId,
+    channel: "website",
+    ...(userId && { userId })
+}),
 });
 
     const { text } = await res.json();
+
+    // 🧹 Vervang loading door antwoord
+    loading.remove();
     const bb = document.createElement("div");
     bb.className = "chat-bubble bot-message";
     bb.innerHTML = (text || "Geen antwoord ontvangen.").replace(/\n/g, "<br>");
     chat.appendChild(bb);
     chat.scrollTop = chat.scrollHeight;
+
 } catch {
+    loading.remove();
     const err = document.createElement("div");
     err.className = "chat-bubble bot-message";
     err.textContent = "Er ging iets mis.";

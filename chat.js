@@ -1,6 +1,4 @@
     (async function () {
-    console.log("[Chatbot] Loading fresh CSS and HTML from GitHub");
-
     const repo = "DoubleWeb-BV/draadwerk-chatbot";
     const timestamp = Date.now();
     const sessionId = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
@@ -15,11 +13,11 @@
     const infoRes = await fetch(`https://api.github.com/repos/${repo}/branches/main`);
     const info = await infoRes.json();
     sha = info.commit.sha;
-} catch (err) {
-    console.error("[Chatbot] Failed to fetch SHA, fallback to 'main'");
+} catch {
     sha = "main";
 }
 
+    // Inject CSS with fade and loading
     try {
     const cssURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.css?ts=${timestamp}`;
     const cssRes = await fetch(cssURL);
@@ -42,6 +40,7 @@
             gap: 6px;
             height: 30px;
         }
+
         .loading-dot {
             width: 8px;
             height: 8px;
@@ -50,9 +49,11 @@
             display: inline-block;
             transform: translateY(5px);
         }
+
         .loading.active .loading-dot {
             animation: bounce 1s infinite ease-in-out;
         }
+
         .loading.active .loading-dot:nth-of-type(1) { animation-delay: 0s; }
         .loading.active .loading-dot:nth-of-type(2) { animation-delay: 0.2s; }
         .loading.active .loading-dot:nth-of-type(3) { animation-delay: 0.4s; }
@@ -66,6 +67,7 @@
     console.error("[Chatbot] Failed to load CSS:", err);
 }
 
+    // Load HTML
     let html;
     try {
     const htmlURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.html?ts=${timestamp}`;
@@ -113,7 +115,7 @@
     chat.scrollTop = chat.scrollHeight;
     input.value = "";
 
-    // Loading bubble
+    // Loading
     const loading = document.createElement("div");
     loading.className = "chat-bubble bot-message fade-in";
     loading.innerHTML = `
@@ -142,12 +144,8 @@
 
     const bb = document.createElement("div");
     bb.className = "chat-bubble bot-message fade-in";
-    const span = document.createElement("span");
-    bb.appendChild(span);
+    bb.innerHTML = (text || "Geen antwoord ontvangen.").replace(/\n/g, "<br>");
     chat.appendChild(bb);
-    chat.scrollTop = chat.scrollHeight;
-
-    await typeText(span, text || "Geen antwoord ontvangen.");
     chat.scrollTop = chat.scrollHeight;
 
 } catch {
@@ -158,16 +156,4 @@
     chat.appendChild(err);
 }
 });
-
-    // Typing-effect functie (typewriter)
-    async function typeText(container, text, delay = 20) {
-    for (let i = 0; i < text.length; i++) {
-    if (text[i] === "\n") {
-    container.innerHTML += "<br>";
-} else {
-    container.innerHTML += text[i];
-}
-    await new Promise(r => setTimeout(r, delay));
-}
-}
 })();

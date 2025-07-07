@@ -18,7 +18,9 @@
     const htmlURL = `${baseCDN}chat.html?ts=${timestamp}`;
     const jsURL   = `${baseCDN}chat.js?ts=${timestamp}`;
 
+    console.log(htmlURL);
     console.log(cssURL);
+    console.log(jsURL);
 
 
     // CSS injecteren

@@ -2,9 +2,22 @@
 (async function () {
     const timestamp = Date.now();
 
-    const cssURL  = `chat.css?ts=${timestamp}`;
-    const htmlURL = `chat.html?ts=${timestamp}`;
-    const jsURL   = `chat.js?ts=${timestamp}`;
+    // Stap 1: Bepaal het script dat zichzelf aanroept
+    const currentScript = document.currentScript || [...document.scripts].pop();
+    const scriptSrc = currentScript.src;
+
+    // Stap 2: Haal de versie en basis-URL uit het scriptpad
+    // Voorbeeld URL: https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@v1.0.29/chatbot-loader.js
+    const versionMatch = scriptSrc.match(/@([^/]+)\/chatbot-loader\.js/);
+    const version = versionMatch ? versionMatch[1] : 'latest';
+
+    const baseCDN = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@${version}/`;
+
+    // Stap 3: Bouw de URLs mét versie en timestamp
+    const cssURL  = `${baseCDN}chat.css?ts=${timestamp}`;
+    const htmlURL = `${baseCDN}chat.html?ts=${timestamp}`;
+    const jsURL   = `${baseCDN}chat.js?ts=${timestamp}`;
+
 
     // CSS injecteren
     const link = document.createElement("link");

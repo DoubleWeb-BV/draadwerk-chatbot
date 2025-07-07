@@ -10,6 +10,18 @@
     const cssURL  = `${baseCDN}chat.css?ts=${timestamp}`;
     const htmlURL = `${baseCDN}chat.html?ts=${timestamp}`;
     const jsURL   = `${baseCDN}chat.js?ts=${timestamp}`;
+    // HTML
+    const html = await fetch(htmlURL).then(r => r.text());
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = html;
+    document.body.appendChild(wrapper);
+
+// Profielfoto instellen
+    const profileImage = document.getElementById('js-profile-image');
+    if (profileImage) {
+        profileImage.src = `${baseCDN}profile.jpg?ts=${timestamp}`;
+    }
+
 
     try {
         // CSS

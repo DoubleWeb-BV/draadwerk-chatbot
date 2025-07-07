@@ -244,6 +244,18 @@ body {
     color: white;
 }
 
+#thumbsDown:hover {
+    background-color: #ff7b61; /* Groen */
+    color: white;
+    cursor: pointer;
+}
+
+/* Actieve (geselecteerde) groene duim */
+#thumbsDown.chat-widget__feedback-btn--active {
+    background-color: #ff7b61;
+    color: white;
+}
+
 /* Optioneel: standaard duimpje een beetje stijlen */
 #thumbsUp,
 #thumbsDown {

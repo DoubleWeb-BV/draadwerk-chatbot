@@ -3,8 +3,9 @@ class ChatWidget {
         this.webhookURL = webhookURL;
         this.userId = userId;
         this.isOpen = false;
+        this.hasWelcomed = false;
 
-        // ✅ Sessie ID ophalen of aanmaken
+        // 🔐 Sessie ID ophalen of aanmaken
         const storedId = localStorage.getItem('chatSessionId');
         if (storedId) {
             this.sessionId = storedId;
@@ -25,7 +26,7 @@ class ChatWidget {
 
     init() {
         this.bindEvents();
-        this.showTooltip();
+        if (typeof this.showTooltip === 'function') this.showTooltip();
         this.startPulseAnimation();
     }
 
@@ -70,33 +71,45 @@ class ChatWidget {
 
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
 
-        // Welkomstbericht tonen
-        let welcomeMessage = `Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?`;
+        // Toon welkomsbericht slechts één keer
+        if (!this.hasWelcomed) {
+            this.clearMessages();
 
-        if (this.sessionWasActive && !this.previousSessionMessageShown) {
-            welcomeMessage += `<br><br><a href="#" id="restoreChatLink">👉 Vorige chat openen</a>`;
-            this.previousSessionMessageShown = true;
-        }
+            let welcomeMessage = `Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?`;
 
-        this.addMessage('bot', welcomeMessage);
-
-        // Event listener voor herstel-link
-        setTimeout(() => {
-            const restoreLink = document.getElementById('restoreChatLink');
-            if (restoreLink) {
-                restoreLink.addEventListener('click', async (e) => {
-                    e.preventDefault();
-                    restoreLink.remove();
-                    this.addMessage('bot', '📂 Vorige chat wordt geladen...');
-                    await this.fetchPreviousMessages();
-                });
+            if (this.sessionWasActive && !this.previousSessionMessageShown) {
+                welcomeMessage += `<br><br><a href="#" id="restoreChatLink">👉 Vorige chat openen</a>`;
+                this.previousSessionMessageShown = true;
             }
-        }, 100);
+
+            this.addMessage('bot', welcomeMessage);
+            this.hasWelcomed = true;
+
+            // Event listener voor herstel-link
+            setTimeout(() => {
+                const restoreLink = document.getElementById('restoreChatLink');
+                if (restoreLink) {
+                    restoreLink.addEventListener('click', async (e) => {
+                        e.preventDefault();
+                        this.clearMessages();
+                        this.addMessage('bot', '📂 Vorige chat wordt geladen...');
+                        await this.fetchPreviousMessages();
+                    });
+                }
+            }, 100);
+        }
     }
 
     closeChat() {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
+    }
+
+    clearMessages() {
+        const container = document.getElementById('chatMessages');
+        if (container) {
+            container.innerHTML = '';
+        }
     }
 
     async sendMessage() {
@@ -135,7 +148,9 @@ class ChatWidget {
     async fetchPreviousMessages() {
         try {
             const res = await fetch(`${this.webhookURL}/history?sessionId=${this.sessionId}`);
-            if (!res.ok) return;
+            if (!res.ok) {
+                throw new Error(`Status ${res.status}`);
+            }
 
             const { messages } = await res.json();
             if (Array.isArray(messages)) {
@@ -144,7 +159,8 @@ class ChatWidget {
                 }
             }
         } catch (err) {
-            console.warn('Geen eerdere berichten opgehaald:', err);
+            console.warn('❌ Geen eerdere berichten opgehaald:', err);
+            this.addMessage('bot', 'Sorry, ik kon je vorige chat niet ophalen.');
         }
     }
 
@@ -192,5 +208,21 @@ class ChatWidget {
 
     handleContact() {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
+    }
+
+    // OPTIONAL
+    showTooltip() {
+        const tooltip = document.getElementById('chatTooltip');
+        if (tooltip) {
+            setTimeout(() => {
+                tooltip.classList.add('chat-widget__tooltip--visible');
+            }, 5000);
+        }
+    }
+
+    startPulseAnimation() {
+        setTimeout(() => {
+            document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse');
+        }, 10000);
     }
 }

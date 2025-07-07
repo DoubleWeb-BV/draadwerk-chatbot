@@ -4,8 +4,8 @@ class ChatWidget {
         this.userId = userId;
         this.isOpen = false;
         this.hasWelcomed = false;
+        this.isRestoring = false;
 
-        // Load or create session ID
         const storedId = localStorage.getItem('chatSessionId');
         if (storedId) {
             this.sessionId = storedId;
@@ -70,7 +70,7 @@ class ChatWidget {
 
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
 
-        if (!this.hasWelcomed) {
+        if (!this.hasWelcomed && !this.isRestoring) {
             this.clearMessages();
 
             let welcome = `Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?`;
@@ -87,6 +87,7 @@ class ChatWidget {
                 if (restoreLink) {
                     restoreLink.addEventListener('click', (e) => {
                         e.preventDefault();
+                        this.isRestoring = true;
                         this.clearMessages();
                         this.loadLocalMessages();
                     });
@@ -132,7 +133,7 @@ class ChatWidget {
                 this.hideTypingIndicator();
                 this.addMessage('bot', (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>'));
             })
-            .catch(err => {
+            .catch(() => {
                 this.hideTypingIndicator();
                 this.addMessage('bot', 'Er ging iets mis.');
             });
@@ -147,7 +148,7 @@ class ChatWidget {
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
 
-        // 🧠 Save message in localStorage
+        // Save to localStorage
         const key = `chatMessages_${this.sessionId}`;
         const saved = JSON.parse(localStorage.getItem(key) || '[]');
         saved.push({ type, text: htmlText });

@@ -1,51 +1,57 @@
-// chatbot-loader.js
 (async function () {
     const timestamp = Date.now();
 
-    // Stap 1: Bepaal het script dat zichzelf aanroept
     const currentScript = document.currentScript || [...document.scripts].pop();
     const scriptSrc = currentScript.src;
-
-    // Stap 2: Haal de versie en basis-URL uit het scriptpad
-    // Voorbeeld URL: https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@v1.0.29/chatbot-loader.js
     const versionMatch = scriptSrc.match(/@([^/]+)\/chatbot-loader\.js/);
     const version = versionMatch ? versionMatch[1] : 'latest';
-
     const baseCDN = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@${version}/`;
 
-    // Stap 3: Bouw de URLs mét versie en timestamp
     const cssURL  = `${baseCDN}chat.css?ts=${timestamp}`;
     const htmlURL = `${baseCDN}chat.html?ts=${timestamp}`;
     const jsURL   = `${baseCDN}chat.js?ts=${timestamp}`;
 
-    console.log(htmlURL);
-    console.log(cssURL);
-    console.log(jsURL);
-
-
-    // CSS injecteren
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = cssURL;
-    document.head.appendChild(link);
-
     try {
-        // HTML injecteren
+        // CSS
+        await new Promise((resolve, reject) => {
+            const link = document.createElement("link");
+            link.rel = "stylesheet";
+            link.href = cssURL;
+            link.onload = resolve;
+            link.onerror = reject;
+            document.head.appendChild(link);
+        });
+
+        // HTML
         const html = await fetch(htmlURL).then(r => r.text());
         const wrapper = document.createElement("div");
         wrapper.innerHTML = html;
         document.body.appendChild(wrapper);
 
-        // JS injecteren NA HTML
-        const script = document.createElement("script");
-        script.src = jsURL;
-        script.onload = () => {
-            console.log("[Chatbot] JS geladen");
-            if (window.initChat) {
-                window.initChat();
-            }
-        };
-        document.body.appendChild(script);
+        // JS + INIT
+        await new Promise((resolve, reject) => {
+            const script = document.createElement("script");
+            script.src = jsURL;
+            script.onload = () => {
+                console.log("[Chatbot Loader] JS geladen");
+
+                const sessionId = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+                );
+
+                const userId = null;
+                const webhookURL = 'https://workflows.draadwerk.nl/webhook/draadwerk-chatbot-v2';
+
+                // ✅ Initialiseer pas hier
+                if (typeof ChatWidget !== 'undefined') {
+                    new ChatWidget(webhookURL, sessionId, userId);
+                }
+
+                resolve();
+            };
+            script.onerror = reject;
+            document.body.appendChild(script);
+        });
 
     } catch (err) {
         console.error("[Chatbot Loader] Fout bij laden:", err);

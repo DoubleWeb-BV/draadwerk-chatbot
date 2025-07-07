@@ -149,14 +149,3 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 }
-
-// Init na DOM-load
-document.addEventListener('DOMContentLoaded', () => {
-    const sessionId = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-    );
-
-    const userId = null;
-    const webhookURL = 'https://workflows.draadwerk.nl/webhook/draadwerk-chatbot-v2';
-    new ChatWidget(webhookURL, sessionId, userId);
-});

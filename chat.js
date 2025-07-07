@@ -1,10 +1,26 @@
 class ChatWidget {
-    constructor(webhookURL, sessionId, userId) {
+    constructor(webhookURL, sessionId = null, userId = null) {
         this.webhookURL = webhookURL;
-        this.sessionId = sessionId;
         this.userId = userId;
         this.isOpen = false;
+
+        // ✅ Sessie ID ophalen of aanmaken
+        const storedId = localStorage.getItem('chatSessionId');
+        if (storedId) {
+            this.sessionId = storedId;
+            this.sessionWasActive = true;
+        } else {
+            this.sessionId = sessionId || this.generateSessionId();
+            this.sessionWasActive = false;
+            localStorage.setItem('chatSessionId', this.sessionId);
+        }
+
+        this.previousSessionMessageShown = false;
         this.init();
+    }
+
+    generateSessionId() {
+        return 'session_' + Math.random().toString(36).substr(2, 9);
     }
 
     init() {
@@ -47,28 +63,40 @@ class ChatWidget {
         this.isOpen ? this.closeChat() : this.openChat();
     }
 
-    openChat() {
+    async openChat() {
         const container = document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
+
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
+
+        // Welkomstbericht tonen
+        let welcomeMessage = `Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?`;
+
+        if (this.sessionWasActive && !this.previousSessionMessageShown) {
+            welcomeMessage += `<br><br><a href="#" id="restoreChatLink">👉 Vorige chat openen</a>`;
+            this.previousSessionMessageShown = true;
+        }
+
+        this.addMessage('bot', welcomeMessage);
+
+        // Event listener voor herstel-link
+        setTimeout(() => {
+            const restoreLink = document.getElementById('restoreChatLink');
+            if (restoreLink) {
+                restoreLink.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    restoreLink.remove();
+                    this.addMessage('bot', '📂 Vorige chat wordt geladen...');
+                    await this.fetchPreviousMessages();
+                });
+            }
+        }, 100);
     }
 
     closeChat() {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
-    }
-
-    showTooltip() {
-        setTimeout(() => {
-            document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
-        }, 5000);
-    }
-
-    startPulseAnimation() {
-        setTimeout(() => {
-            document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse');
-        }, 10000);
     }
 
     async sendMessage() {
@@ -104,6 +132,22 @@ class ChatWidget {
         }
     }
 
+    async fetchPreviousMessages() {
+        try {
+            const res = await fetch(`${this.webhookURL}/history?sessionId=${this.sessionId}`);
+            if (!res.ok) return;
+
+            const { messages } = await res.json();
+            if (Array.isArray(messages)) {
+                for (const msg of messages) {
+                    this.addMessage(msg.type, msg.text.replace(/\n/g, '<br>'));
+                }
+            }
+        } catch (err) {
+            console.warn('Geen eerdere berichten opgehaald:', err);
+        }
+    }
+
     addMessage(type, htmlText) {
         const msg = document.createElement('div');
         msg.className = `chat-widget__message chat-widget__message--${type}`;
@@ -118,12 +162,13 @@ class ChatWidget {
         indicator.id = 'typingIndicator';
         indicator.className = 'chat-widget__typing chat-widget__typing--visible';
         indicator.innerHTML = `
-      <div class="chat-widget__typing-dot"></div>
-      <div class="chat-widget__typing-dot"></div>
-      <div class="chat-widget__typing-dot"></div>
-    `;
-        document.getElementById('chatMessages')?.appendChild(indicator);
-        document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+            <div class="chat-widget__typing-dot"></div>
+            <div class="chat-widget__typing-dot"></div>
+            <div class="chat-widget__typing-dot"></div>
+        `;
+        const container = document.getElementById('chatMessages');
+        container.appendChild(indicator);
+        container.scrollTop = container.scrollHeight;
     }
 
     hideTypingIndicator() {

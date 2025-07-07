@@ -23,26 +23,16 @@ class ChatWidget {
         const thumbsDown = document.getElementById('thumbsDown');
         const contactBtn = document.getElementById('contactBtn');
 
-        // Initieel uitschakelen
+        // Feedback disabled until user sends message
         thumbsUp.disabled = true;
         thumbsDown.disabled = true;
 
         chatButton?.addEventListener('click', () => this.toggleChat());
         chatClose?.addEventListener('click', () => this.closeChat());
         chatSend?.addEventListener('click', () => this.sendMessage());
-        thumbsUp?.addEventListener('click', () => this.handleFeedback('up'));
-        thumbsDown?.addEventListener('click', () => this.handleFeedback('down'));
+        thumbsUp?.addEventListener('click', () => this.handleFeedback(true));
+        thumbsDown?.addEventListener('click', () => this.handleFeedback(false));
         contactBtn?.addEventListener('click', () => this.handleContact());
-
-        // Highlight laatste botantwoord bij hover op feedback
-        [thumbsUp, thumbsDown].forEach(btn => {
-            btn?.addEventListener('mouseenter', () => {
-                this.lastBotMessage?.classList.add('chat-widget__message--highlight');
-            });
-            btn?.addEventListener('mouseleave', () => {
-                this.lastBotMessage?.classList.remove('chat-widget__message--highlight');
-            });
-        });
 
         chatInput?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -96,7 +86,7 @@ class ChatWidget {
         input.style.height = 'auto';
         document.getElementById('chatSend').disabled = true;
 
-        // Activeer feedbackknoppen
+        // Enable feedback buttons
         document.getElementById('thumbsUp').disabled = false;
         document.getElementById('thumbsDown').disabled = false;
 
@@ -158,13 +148,13 @@ class ChatWidget {
         document.getElementById('typingIndicator')?.remove();
     }
 
-    handleFeedback(type) {
+    handleFeedback(isUseful) {
         const thumbsUp = document.getElementById('thumbsUp');
         const thumbsDown = document.getElementById('thumbsDown');
         thumbsUp.classList.remove('chat-widget__feedback-btn--active');
         thumbsDown.classList.remove('chat-widget__feedback-btn--active');
 
-        if (type === 'up') {
+        if (isUseful) {
             thumbsUp.classList.add('chat-widget__feedback-btn--active');
             this.addMessage('bot', 'Dank je! Fijn dat ik je kon helpen. 😊');
         } else {
@@ -172,12 +162,13 @@ class ChatWidget {
             this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
         }
 
+        // Send true/false in feedback
         fetch(this.webhookURL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 type: 'feedback',
-                feedback: type,
+                feedback: isUseful,
                 sessionId: this.sessionId,
                 ...(this.userId && { userId: this.userId })
             })

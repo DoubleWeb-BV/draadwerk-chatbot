@@ -231,10 +231,26 @@ body {
     background: rgba(255,255,255,0.1);
 }
 
-.chat-widget__message--highlight {
-    background-color: #ff7b61 !important;
+/* Groene hover voor nuttig (duimpje omhoog) */
+#thumbsUp:hover {
+    background-color: #4caf50; /* Groen */
     color: white;
+    cursor: pointer;
+}
+
+/* Actieve (geselecteerde) groene duim */
+#thumbsUp.chat-widget__feedback-btn--active {
+    background-color: #4caf50;
+    color: white;
+}
+
+/* Optioneel: standaard duimpje een beetje stijlen */
+#thumbsUp,
+#thumbsDown {
     transition: background-color 0.3s ease;
+    border: none;
+    padding: 6px 10px;
+    border-radius: 6px;
 }
 
 

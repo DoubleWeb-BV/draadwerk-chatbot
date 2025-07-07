@@ -154,12 +154,15 @@ class ChatWidget {
             this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
         }
 
+        // Stuur "successful" of "unsuccessful"
+        const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
+
         fetch(this.webhookURL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 type: 'feedback',
-                feedback: isUseful,
+                feedback: feedbackLabel,
                 sessionId: this.sessionId,
                 ...(this.userId && { userId: this.userId })
             })
@@ -167,6 +170,7 @@ class ChatWidget {
             console.error('Feedback verzenden mislukt:', err);
         });
     }
+
 
     handleContact() {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);

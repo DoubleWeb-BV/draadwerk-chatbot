@@ -14,7 +14,7 @@
         sha = "main";
     }
 
-    const cssURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.css?ts=${timestamp}`;
+    const cssURL = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/chat.css?ts=${timestamp}`;
     const htmlURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.html?ts=${timestamp}`;
     const jsURL = `https://raw.githubusercontent.com/${repo}/${sha}/chat.js?ts=${timestamp}`;
 

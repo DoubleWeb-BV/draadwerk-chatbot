@@ -4,6 +4,7 @@ class ChatWidget {
         this.sessionId = sessionId;
         this.userId = userId;
         this.isOpen = false;
+        this.lastUserMessage = null;
         this.init();
     }
 
@@ -22,12 +23,27 @@ class ChatWidget {
         const thumbsDown = document.getElementById('thumbsDown');
         const contactBtn = document.getElementById('contactBtn');
 
+        // Initieel uitgeschakeld
+        thumbsUp.disabled = true;
+        thumbsDown.disabled = true;
+
         chatButton?.addEventListener('click', () => this.toggleChat());
         chatClose?.addEventListener('click', () => this.closeChat());
         chatSend?.addEventListener('click', () => this.sendMessage());
+        contactBtn?.addEventListener('click', () => this.handleContact());
+
         thumbsUp?.addEventListener('click', () => this.handleFeedback('up'));
         thumbsDown?.addEventListener('click', () => this.handleFeedback('down'));
-        contactBtn?.addEventListener('click', () => this.handleContact());
+
+        // Hover effect op laatste user message
+        [thumbsUp, thumbsDown].forEach(btn => {
+            btn?.addEventListener('mouseenter', () => {
+                this.lastUserMessage?.classList.add('chat-widget__message--highlight');
+            });
+            btn?.addEventListener('mouseleave', () => {
+                this.lastUserMessage?.classList.remove('chat-widget__message--highlight');
+            });
+        });
 
         chatInput?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -76,10 +92,16 @@ class ChatWidget {
         const message = input.value.trim();
         if (!message) return;
 
-        this.addMessage('user', message);
+        const msgEl = this.addMessage('user', message);
+        this.lastUserMessage = msgEl;
+
         input.value = '';
         input.style.height = 'auto';
         document.getElementById('chatSend').disabled = true;
+
+        // Activeer thumbs
+        document.getElementById('thumbsUp').disabled = false;
+        document.getElementById('thumbsDown').disabled = false;
 
         this.showTypingIndicator();
 
@@ -112,6 +134,7 @@ class ChatWidget {
         const container = document.getElementById('chatMessages');
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
+        return msg;
     }
 
     showTypingIndicator() {
@@ -145,7 +168,6 @@ class ChatWidget {
             this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
         }
 
-        // Feedback verzenden via dezelfde webhook met type
         fetch(this.webhookURL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

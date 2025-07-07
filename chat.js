@@ -88,6 +88,7 @@ class ChatWidget {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    type: 'message',
                     question: message,
                     sessionId: this.sessionId,
                     channel: "website",
@@ -118,10 +119,10 @@ class ChatWidget {
         indicator.id = 'typingIndicator';
         indicator.className = 'chat-widget__typing chat-widget__typing--visible';
         indicator.innerHTML = `
-      <div class="chat-widget__typing-dot"></div>
-      <div class="chat-widget__typing-dot"></div>
-      <div class="chat-widget__typing-dot"></div>
-    `;
+            <div class="chat-widget__typing-dot"></div>
+            <div class="chat-widget__typing-dot"></div>
+            <div class="chat-widget__typing-dot"></div>
+        `;
         document.getElementById('chatMessages')?.appendChild(indicator);
         document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
     }
@@ -144,21 +145,20 @@ class ChatWidget {
             this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
         }
 
-        // Feedback verzenden via dezelfde webhook
+        // Feedback verzenden via dezelfde webhook met type
         fetch(this.webhookURL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 type: 'feedback',
-                feedback: type, // 'up' of 'down'
+                feedback: type,
                 sessionId: this.sessionId,
-                userId: this.userId || null
+                ...(this.userId && { userId: this.userId })
             })
         }).catch(err => {
             console.error('Feedback verzenden mislukt:', err);
         });
     }
-
 
     handleContact() {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);

@@ -23,10 +23,6 @@ class ChatWidget {
         const thumbsDown = document.getElementById('thumbsDown');
         const contactBtn = document.getElementById('contactBtn');
 
-        // Feedback disabled until user sends message
-        thumbsUp.disabled = true;
-        thumbsDown.disabled = true;
-
         chatButton?.addEventListener('click', () => this.toggleChat());
         chatClose?.addEventListener('click', () => this.closeChat());
         chatSend?.addEventListener('click', () => this.sendMessage());
@@ -85,10 +81,6 @@ class ChatWidget {
         input.value = '';
         input.style.height = 'auto';
         document.getElementById('chatSend').disabled = true;
-
-        // Enable feedback buttons
-        document.getElementById('thumbsUp').disabled = false;
-        document.getElementById('thumbsDown').disabled = false;
 
         this.showTypingIndicator();
 
@@ -162,7 +154,6 @@ class ChatWidget {
             this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
         }
 
-        // Send true/false in feedback
         fetch(this.webhookURL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

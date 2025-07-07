@@ -18,6 +18,8 @@
     const htmlURL = `${baseCDN}chat.html?ts=${timestamp}`;
     const jsURL   = `${baseCDN}chat.js?ts=${timestamp}`;
 
+    console.log(cssURL);
+
 
     // CSS injecteren
     const link = document.createElement("link");

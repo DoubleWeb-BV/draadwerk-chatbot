@@ -1,31 +1,15 @@
 class ChatWidget {
-    constructor(webhookURL, sessionId = null, userId = null) {
+    constructor(webhookURL, sessionId, userId) {
         this.webhookURL = webhookURL;
+        this.sessionId = sessionId;
         this.userId = userId;
         this.isOpen = false;
-        this.hasWelcomed = false;
-        this.isRestoring = false;
-
-        const storedId = localStorage.getItem('chatSessionId');
-        if (storedId) {
-            this.sessionId = storedId;
-            this.sessionWasActive = true;
-        } else {
-            this.sessionId = sessionId || this.generateSessionId();
-            localStorage.setItem('chatSessionId', this.sessionId);
-            this.sessionWasActive = false;
-        }
-
         this.init();
-    }
-
-    generateSessionId() {
-        return 'session_' + Math.random().toString(36).substr(2, 9);
     }
 
     init() {
         this.bindEvents();
-        this.showTooltip?.();
+        this.showTooltip();
         this.startPulseAnimation();
     }
 
@@ -67,33 +51,7 @@ class ChatWidget {
         const container = document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
-
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
-
-        if (!this.hasWelcomed && !this.isRestoring) {
-            this.clearMessages();
-
-            let welcome = `Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?`;
-
-            if (this.sessionWasActive) {
-                welcome += `<br><br><a href="#" id="restoreChatLink">👉 Vorige chat openen</a>`;
-            }
-
-            this.addMessage('bot', welcome);
-            this.hasWelcomed = true;
-
-            setTimeout(() => {
-                const restoreLink = document.getElementById('restoreChatLink');
-                if (restoreLink) {
-                    restoreLink.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        this.isRestoring = true;
-                        this.clearMessages();
-                        this.loadLocalMessages();
-                    });
-                }
-            }, 100);
-        }
     }
 
     closeChat() {
@@ -101,12 +59,19 @@ class ChatWidget {
         this.isOpen = false;
     }
 
-    clearMessages() {
-        const container = document.getElementById('chatMessages');
-        if (container) container.innerHTML = '';
+    showTooltip() {
+        setTimeout(() => {
+            document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
+        }, 5000);
     }
 
-    sendMessage() {
+    startPulseAnimation() {
+        setTimeout(() => {
+            document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse');
+        }, 10000);
+    }
+
+    async sendMessage() {
         const input = document.getElementById('chatInput');
         const message = input.value.trim();
         if (!message) return;
@@ -118,54 +83,34 @@ class ChatWidget {
 
         this.showTypingIndicator();
 
-        fetch(this.webhookURL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                question: message,
-                sessionId: this.sessionId,
-                channel: "website",
-                ...(this.userId && { userId: this.userId })
-            })
-        })
-            .then(res => res.json())
-            .then(({ text }) => {
-                this.hideTypingIndicator();
-                this.addMessage('bot', (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>'));
-            })
-            .catch(() => {
-                this.hideTypingIndicator();
-                this.addMessage('bot', 'Er ging iets mis.');
+        try {
+            const res = await fetch(this.webhookURL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question: message,
+                    sessionId: this.sessionId,
+                    channel: "website",
+                    ...(this.userId && { userId: this.userId })
+                })
             });
+
+            const { text } = await res.json();
+            this.hideTypingIndicator();
+            this.addMessage('bot', (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>'));
+        } catch (err) {
+            this.hideTypingIndicator();
+            this.addMessage('bot', 'Er ging iets mis.');
+        }
     }
 
     addMessage(type, htmlText) {
         const msg = document.createElement('div');
         msg.className = `chat-widget__message chat-widget__message--${type}`;
         msg.innerHTML = htmlText;
-
         const container = document.getElementById('chatMessages');
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
-
-        // Save to localStorage
-        const key = `chatMessages_${this.sessionId}`;
-        const saved = JSON.parse(localStorage.getItem(key) || '[]');
-        saved.push({ type, text: htmlText });
-        localStorage.setItem(key, JSON.stringify(saved));
-    }
-
-    loadLocalMessages() {
-        const key = `chatMessages_${this.sessionId}`;
-        const saved = localStorage.getItem(key);
-        if (saved) {
-            const messages = JSON.parse(saved);
-            for (const msg of messages) {
-                this.addMessage(msg.type, msg.text);
-            }
-        } else {
-            this.addMessage('bot', 'Er zijn geen eerdere berichten gevonden.');
-        }
     }
 
     showTypingIndicator() {
@@ -173,13 +118,12 @@ class ChatWidget {
         indicator.id = 'typingIndicator';
         indicator.className = 'chat-widget__typing chat-widget__typing--visible';
         indicator.innerHTML = `
-          <div class="chat-widget__typing-dot"></div>
-          <div class="chat-widget__typing-dot"></div>
-          <div class="chat-widget__typing-dot"></div>
-        `;
-        const container = document.getElementById('chatMessages');
-        container.appendChild(indicator);
-        container.scrollTop = container.scrollHeight;
+      <div class="chat-widget__typing-dot"></div>
+      <div class="chat-widget__typing-dot"></div>
+      <div class="chat-widget__typing-dot"></div>
+    `;
+        document.getElementById('chatMessages')?.appendChild(indicator);
+        document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
     }
 
     hideTypingIndicator() {
@@ -203,17 +147,5 @@ class ChatWidget {
 
     handleContact() {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
-    }
-
-    showTooltip() {
-        setTimeout(() => {
-            document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
-        }, 5000);
-    }
-
-    startPulseAnimation() {
-        setTimeout(() => {
-            document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse');
-        }, 10000);
     }
 }

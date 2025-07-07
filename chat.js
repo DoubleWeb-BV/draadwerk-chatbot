@@ -5,7 +5,7 @@ class ChatWidget {
         this.isOpen = false;
         this.hasWelcomed = false;
 
-        // 🔐 Sessie ID ophalen of aanmaken
+        // 🔐 Unieke sessie-ID ophalen of aanmaken
         const storedId = localStorage.getItem('chatSessionId');
         if (storedId) {
             this.sessionId = storedId;
@@ -71,7 +71,6 @@ class ChatWidget {
 
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
 
-        // Toon welkomsbericht slechts één keer
         if (!this.hasWelcomed) {
             this.clearMessages();
 
@@ -89,11 +88,11 @@ class ChatWidget {
             setTimeout(() => {
                 const restoreLink = document.getElementById('restoreChatLink');
                 if (restoreLink) {
-                    restoreLink.addEventListener('click', async (e) => {
+                    restoreLink.addEventListener('click', (e) => {
                         e.preventDefault();
                         this.clearMessages();
                         this.addMessage('bot', '📂 Vorige chat wordt geladen...');
-                        await this.fetchPreviousMessages();
+                        this.loadLocalMessages();
                     });
                 }
             }, 100);
@@ -112,7 +111,7 @@ class ChatWidget {
         }
     }
 
-    async sendMessage() {
+    sendMessage() {
         const input = document.getElementById('chatInput');
         const message = input.value.trim();
         if (!message) return;
@@ -124,44 +123,11 @@ class ChatWidget {
 
         this.showTypingIndicator();
 
-        try {
-            const res = await fetch(this.webhookURL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    question: message,
-                    sessionId: this.sessionId,
-                    channel: "website",
-                    ...(this.userId && { userId: this.userId })
-                })
-            });
-
-            const { text } = await res.json();
+        // Simuleer reactie (je kunt hier je eigen GPT webhook aanroepen)
+        setTimeout(() => {
             this.hideTypingIndicator();
-            this.addMessage('bot', (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>'));
-        } catch (err) {
-            this.hideTypingIndicator();
-            this.addMessage('bot', 'Er ging iets mis.');
-        }
-    }
-
-    async fetchPreviousMessages() {
-        try {
-            const res = await fetch(`${this.webhookURL}/history?sessionId=${this.sessionId}`);
-            if (!res.ok) {
-                throw new Error(`Status ${res.status}`);
-            }
-
-            const { messages } = await res.json();
-            if (Array.isArray(messages)) {
-                for (const msg of messages) {
-                    this.addMessage(msg.type, msg.text.replace(/\n/g, '<br>'));
-                }
-            }
-        } catch (err) {
-            console.warn('❌ Geen eerdere berichten opgehaald:', err);
-            this.addMessage('bot', 'Sorry, ik kon je vorige chat niet ophalen.');
-        }
+            this.addMessage('bot', `Je zei: ${message}`);
+        }, 1000);
     }
 
     addMessage(type, htmlText) {
@@ -171,6 +137,25 @@ class ChatWidget {
         const container = document.getElementById('chatMessages');
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
+
+        // 📦 Opslaan in localStorage
+        const storageKey = `chatMessages_${this.sessionId}`;
+        const messages = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        messages.push({ type, text: htmlText });
+        localStorage.setItem(storageKey, JSON.stringify(messages));
+    }
+
+    loadLocalMessages() {
+        const storageKey = `chatMessages_${this.sessionId}`;
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+            const messages = JSON.parse(saved);
+            for (const msg of messages) {
+                this.addMessage(msg.type, msg.text);
+            }
+        } else {
+            this.addMessage('bot', 'Er zijn geen eerdere berichten gevonden.');
+        }
     }
 
     showTypingIndicator() {
@@ -210,7 +195,6 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 
-    // OPTIONAL
     showTooltip() {
         const tooltip = document.getElementById('chatTooltip');
         if (tooltip) {

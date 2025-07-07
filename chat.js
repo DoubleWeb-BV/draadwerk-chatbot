@@ -4,7 +4,7 @@ class ChatWidget {
         this.sessionId = sessionId;
         this.userId = userId;
         this.isOpen = false;
-        this.lastUserMessage = null;
+        this.lastBotMessage = null;
         this.init();
     }
 
@@ -23,25 +23,24 @@ class ChatWidget {
         const thumbsDown = document.getElementById('thumbsDown');
         const contactBtn = document.getElementById('contactBtn');
 
-        // Initieel uitgeschakeld
+        // Initieel uitschakelen
         thumbsUp.disabled = true;
         thumbsDown.disabled = true;
 
         chatButton?.addEventListener('click', () => this.toggleChat());
         chatClose?.addEventListener('click', () => this.closeChat());
         chatSend?.addEventListener('click', () => this.sendMessage());
-        contactBtn?.addEventListener('click', () => this.handleContact());
-
         thumbsUp?.addEventListener('click', () => this.handleFeedback('up'));
         thumbsDown?.addEventListener('click', () => this.handleFeedback('down'));
+        contactBtn?.addEventListener('click', () => this.handleContact());
 
-        // Hover effect op laatste user message
+        // Highlight laatste botantwoord bij hover op feedback
         [thumbsUp, thumbsDown].forEach(btn => {
             btn?.addEventListener('mouseenter', () => {
-                this.lastUserMessage?.classList.add('chat-widget__message--highlight');
+                this.lastBotMessage?.classList.add('chat-widget__message--highlight');
             });
             btn?.addEventListener('mouseleave', () => {
-                this.lastUserMessage?.classList.remove('chat-widget__message--highlight');
+                this.lastBotMessage?.classList.remove('chat-widget__message--highlight');
             });
         });
 
@@ -92,14 +91,12 @@ class ChatWidget {
         const message = input.value.trim();
         if (!message) return;
 
-        const msgEl = this.addMessage('user', message);
-        this.lastUserMessage = msgEl;
-
+        this.addMessage('user', message);
         input.value = '';
         input.style.height = 'auto';
         document.getElementById('chatSend').disabled = true;
 
-        // Activeer thumbs
+        // Activeer feedbackknoppen
         document.getElementById('thumbsUp').disabled = false;
         document.getElementById('thumbsDown').disabled = false;
 
@@ -120,10 +117,12 @@ class ChatWidget {
 
             const { text } = await res.json();
             this.hideTypingIndicator();
-            this.addMessage('bot', (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>'));
+            const botMessage = this.addMessage('bot', (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>'));
+            this.lastBotMessage = botMessage;
         } catch (err) {
             this.hideTypingIndicator();
-            this.addMessage('bot', 'Er ging iets mis.');
+            const botMessage = this.addMessage('bot', 'Er ging iets mis.');
+            this.lastBotMessage = botMessage;
         }
     }
 
@@ -134,6 +133,11 @@ class ChatWidget {
         const container = document.getElementById('chatMessages');
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
+
+        if (type === 'bot') {
+            this.lastBotMessage = msg;
+        }
+
         return msg;
     }
 

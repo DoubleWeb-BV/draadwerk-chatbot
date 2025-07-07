@@ -420,11 +420,6 @@ body {
     font-size: 16px;
 }
 
-.chat-widget__feedback-btn:hover {
-    background: #f8f9fa;
-    border-color: #ff7b61;
-}
-
 .chat-widget__feedback-btn--active {
     background: #ff7b61;
     border-color: #ff7b61;

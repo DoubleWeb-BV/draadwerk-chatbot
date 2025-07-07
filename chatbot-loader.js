@@ -2,9 +2,9 @@
 (async function () {
     const timestamp = Date.now();
 
-    const cssURL  = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.css?ts=${timestamp}`;
-    const htmlURL = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.html?ts=${timestamp}`;
-    const jsURL   = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@latest/chat.js?ts=${timestamp}`;
+    const cssURL  = `chat.css?ts=${timestamp}`;
+    const htmlURL = `chat.html?ts=${timestamp}`;
+    const jsURL   = `chat.js?ts=${timestamp}`;
 
     // CSS injecteren
     const link = document.createElement("link");

@@ -1,1 +1,55 @@
-<script src="https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@v1.0.15/chat.js" defer></script>
+<link rel="stylesheet" href="chat.css">
+<!-- chat.html -->
+<div class="chat-widget">
+    <!-- Chat Button -->
+    <button class="chat-widget__button" id="chatButton">
+        <div class="chat-widget__ai-badge">AI</div>
+        <div class="chat-widget__online-indicator"></div>
+        <img class="chat-widget__button-icon" src="profile.jpg" alt="Michael">
+    </button>
+
+    <!-- Tooltip -->
+    <div class="chat-widget__tooltip" id="chatTooltip">👋 Zin om te sparren?</div>
+
+    <!-- Chat Container -->
+    <div class="chat-widget__container" id="chatContainer">
+        <div class="chat-widget__header">
+            <div class="chat-widget__header-content">
+                <div class="chat-widget__header-avatar">
+                    <img src="profile.jpg" alt="Michael">
+                </div>
+                <div class="chat-widget__header-info">
+                    <div class="chat-widget__header-title">Michael van Draadwerk</div>
+                    <div class="chat-widget__header-subtitle">Online • AI Assistent</div>
+                </div>
+            </div>
+            <button class="chat-widget__close" id="chatClose">×</button>
+        </div>
+
+
+        <div class="chat-widget__actions">
+            <div class="chat-widget__feedback">
+                <button class="chat-widget__feedback-btn" id="thumbsUp" title="Nuttig">👍</button>
+                <button class="chat-widget__feedback-btn" id="thumbsDown" title="Niet nuttig">👎</button>
+            </div>
+            <button class="chat-widget__contact-btn" id="contactBtn">Direct Contact</button>
+        </div>
+        <div class="chat-widget__messages" id="chatMessages">
+            <div class="chat-widget__message chat-widget__message--bot">
+                Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?
+            </div>
+        </div>
+
+        <div class="chat-widget__input-container">
+            <textarea class="chat-widget__input" id="chatInput" placeholder="Typ je bericht..." rows="1"></textarea>
+            <button class="chat-widget__send" id="chatSend" disabled>
+                <svg class="chat-widget__send-icon" viewBox="0 0 24 24">
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Scripts -->
+<script src="chat.js"></script>

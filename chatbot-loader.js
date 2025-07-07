@@ -44,6 +44,15 @@
             };
         }
 
+        const profileImage_2 = document.getElementById('js-profile-image-2');
+        if (profileImage_2) {
+            profileImage_2.src = imgURL;
+            profileImage_2.onerror = () => {
+                console.warn("[Chatbot Loader] Profielfoto niet gevonden, gebruik fallback.");
+                profileImage_2.src = 'https://via.placeholder.com/40?text=?';
+            };
+        }
+
         // JS laden en pas daarna initialiseren
         await new Promise((resolve, reject) => {
             const script = document.createElement("script");

@@ -5,18 +5,17 @@ class ChatWidget {
         this.isOpen = false;
         this.hasWelcomed = false;
 
-        // 🔐 Unieke sessie-ID ophalen of aanmaken
+        // Load or create session ID
         const storedId = localStorage.getItem('chatSessionId');
         if (storedId) {
             this.sessionId = storedId;
             this.sessionWasActive = true;
         } else {
             this.sessionId = sessionId || this.generateSessionId();
-            this.sessionWasActive = false;
             localStorage.setItem('chatSessionId', this.sessionId);
+            this.sessionWasActive = false;
         }
 
-        this.previousSessionMessageShown = false;
         this.init();
     }
 
@@ -26,7 +25,7 @@ class ChatWidget {
 
     init() {
         this.bindEvents();
-        if (typeof this.showTooltip === 'function') this.showTooltip();
+        this.showTooltip?.();
         this.startPulseAnimation();
     }
 
@@ -64,7 +63,7 @@ class ChatWidget {
         this.isOpen ? this.closeChat() : this.openChat();
     }
 
-    async openChat() {
+    openChat() {
         const container = document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
@@ -74,24 +73,21 @@ class ChatWidget {
         if (!this.hasWelcomed) {
             this.clearMessages();
 
-            let welcomeMessage = `Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?`;
+            let welcome = `Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?`;
 
-            if (this.sessionWasActive && !this.previousSessionMessageShown) {
-                welcomeMessage += `<br><br><a href="#" id="restoreChatLink">👉 Vorige chat openen</a>`;
-                this.previousSessionMessageShown = true;
+            if (this.sessionWasActive) {
+                welcome += `<br><br><a href="#" id="restoreChatLink">👉 Vorige chat openen</a>`;
             }
 
-            this.addMessage('bot', welcomeMessage);
+            this.addMessage('bot', welcome);
             this.hasWelcomed = true;
 
-            // Event listener voor herstel-link
             setTimeout(() => {
                 const restoreLink = document.getElementById('restoreChatLink');
                 if (restoreLink) {
                     restoreLink.addEventListener('click', (e) => {
                         e.preventDefault();
                         this.clearMessages();
-                        this.addMessage('bot', '📂 Vorige chat wordt geladen...');
                         this.loadLocalMessages();
                     });
                 }
@@ -106,9 +102,7 @@ class ChatWidget {
 
     clearMessages() {
         const container = document.getElementById('chatMessages');
-        if (container) {
-            container.innerHTML = '';
-        }
+        if (container) container.innerHTML = '';
     }
 
     sendMessage() {
@@ -123,31 +117,46 @@ class ChatWidget {
 
         this.showTypingIndicator();
 
-        // Simuleer reactie (je kunt hier je eigen GPT webhook aanroepen)
-        setTimeout(() => {
-            this.hideTypingIndicator();
-            this.addMessage('bot', `Je zei: ${message}`);
-        }, 1000);
+        fetch(this.webhookURL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                question: message,
+                sessionId: this.sessionId,
+                channel: "website",
+                ...(this.userId && { userId: this.userId })
+            })
+        })
+            .then(res => res.json())
+            .then(({ text }) => {
+                this.hideTypingIndicator();
+                this.addMessage('bot', (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>'));
+            })
+            .catch(err => {
+                this.hideTypingIndicator();
+                this.addMessage('bot', 'Er ging iets mis.');
+            });
     }
 
     addMessage(type, htmlText) {
         const msg = document.createElement('div');
         msg.className = `chat-widget__message chat-widget__message--${type}`;
         msg.innerHTML = htmlText;
+
         const container = document.getElementById('chatMessages');
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
 
-        // 📦 Opslaan in localStorage
-        const storageKey = `chatMessages_${this.sessionId}`;
-        const messages = JSON.parse(localStorage.getItem(storageKey) || '[]');
-        messages.push({ type, text: htmlText });
-        localStorage.setItem(storageKey, JSON.stringify(messages));
+        // 🧠 Save message in localStorage
+        const key = `chatMessages_${this.sessionId}`;
+        const saved = JSON.parse(localStorage.getItem(key) || '[]');
+        saved.push({ type, text: htmlText });
+        localStorage.setItem(key, JSON.stringify(saved));
     }
 
     loadLocalMessages() {
-        const storageKey = `chatMessages_${this.sessionId}`;
-        const saved = localStorage.getItem(storageKey);
+        const key = `chatMessages_${this.sessionId}`;
+        const saved = localStorage.getItem(key);
         if (saved) {
             const messages = JSON.parse(saved);
             for (const msg of messages) {
@@ -163,9 +172,9 @@ class ChatWidget {
         indicator.id = 'typingIndicator';
         indicator.className = 'chat-widget__typing chat-widget__typing--visible';
         indicator.innerHTML = `
-            <div class="chat-widget__typing-dot"></div>
-            <div class="chat-widget__typing-dot"></div>
-            <div class="chat-widget__typing-dot"></div>
+          <div class="chat-widget__typing-dot"></div>
+          <div class="chat-widget__typing-dot"></div>
+          <div class="chat-widget__typing-dot"></div>
         `;
         const container = document.getElementById('chatMessages');
         container.appendChild(indicator);
@@ -196,12 +205,9 @@ class ChatWidget {
     }
 
     showTooltip() {
-        const tooltip = document.getElementById('chatTooltip');
-        if (tooltip) {
-            setTimeout(() => {
-                tooltip.classList.add('chat-widget__tooltip--visible');
-            }, 5000);
-        }
+        setTimeout(() => {
+            document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
+        }, 5000);
     }
 
     startPulseAnimation() {

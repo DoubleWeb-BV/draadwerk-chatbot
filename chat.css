@@ -426,6 +426,13 @@ body {
     color: white;
 }
 
+.chat-widget__feedback-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+
 .chat-widget__contact-btn {
     background: #022d1f;
     color: white;

@@ -141,13 +141,14 @@ class ChatWidget {
     }
 
     handleFeedback(isUseful) {
-        if (!this.lastBotMessage) {
+        const thumbsUp = document.getElementById('thumbsUp');
+        const thumbsDown = document.getElementById('thumbsDown');
+
+        if (thumbsUp.disabled || thumbsDown.disabled) {
             this.addMessage('bot', 'Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
             return;
         }
 
-        const thumbsUp = document.getElementById('thumbsUp');
-        const thumbsDown = document.getElementById('thumbsDown');
         thumbsUp.classList.remove('chat-widget__feedback-btn--active');
         thumbsDown.classList.remove('chat-widget__feedback-btn--active');
 
@@ -158,6 +159,10 @@ class ChatWidget {
             thumbsDown.classList.add('chat-widget__feedback-btn--active');
             this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
         }
+
+        // Disable feedback buttons after use
+        thumbsUp.setAttribute('disabled', true);
+        thumbsDown.setAttribute('disabled', true);
 
         const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
 

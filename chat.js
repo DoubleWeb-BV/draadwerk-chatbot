@@ -141,6 +141,11 @@ class ChatWidget {
     }
 
     handleFeedback(isUseful) {
+        if (!this.lastBotMessage) {
+            this.addMessage('bot', 'Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
+            return;
+        }
+
         const thumbsUp = document.getElementById('thumbsUp');
         const thumbsDown = document.getElementById('thumbsDown');
         thumbsUp.classList.remove('chat-widget__feedback-btn--active');
@@ -154,7 +159,6 @@ class ChatWidget {
             this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
         }
 
-        // Stuur "successful" of "unsuccessful"
         const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
 
         fetch(this.webhookURL, {
@@ -170,6 +174,7 @@ class ChatWidget {
             console.error('Feedback verzenden mislukt:', err);
         });
     }
+
 
 
     handleContact() {

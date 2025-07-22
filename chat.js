@@ -111,7 +111,21 @@ class ChatWidget {
     addMessage(type, htmlText) {
         const msg = document.createElement('div');
         msg.className = `chat-widget__message chat-widget__message--${type}`;
-        msg.innerHTML = htmlText;
+
+        const timestamp = new Date();
+        const formattedTime = timestamp.toLocaleString('nl-NL', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        msg.innerHTML = `
+        <div class="chat-widget__message-text">${htmlText}</div>
+        <div class="chat-widget__timestamp">${formattedTime}</div>
+    `;
+
         const container = document.getElementById('chatMessages');
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
@@ -124,6 +138,7 @@ class ChatWidget {
 
         return msg;
     }
+
 
     showTypingIndicator() {
         const indicator = document.createElement('div');

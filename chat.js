@@ -118,6 +118,8 @@ class ChatWidget {
 
         if (type === 'bot') {
             this.lastBotMessage = msg;
+            document.getElementById('thumbsUp')?.removeAttribute('disabled');
+            document.getElementById('thumbsDown')?.removeAttribute('disabled');
         }
 
         return msg;

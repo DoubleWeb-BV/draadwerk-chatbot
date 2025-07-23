@@ -5,7 +5,7 @@ class ChatWidget {
         this.userId = userId;
         this.isOpen = false;
         this.lastBotMessage = null;
-        this.chatRestored = false; // ✅ voorkomt dubbelen
+        this.chatRestored = false; // voorkomt meerdere restores
         this.init();
     }
 
@@ -54,7 +54,7 @@ class ChatWidget {
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
 
-        this.restoreChatHistory(); // ✅ wordt maar één keer uitgevoerd
+        this.restoreChatHistory();
 
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
     }
@@ -112,7 +112,7 @@ class ChatWidget {
         }
     }
 
-    addMessage(type, htmlText) {
+    addMessage(type, htmlText, isRestoring = false) {
         const msg = document.createElement('div');
         msg.className = `chat-widget__message chat-widget__message--${type}`;
 
@@ -140,7 +140,9 @@ class ChatWidget {
             document.getElementById('thumbsDown')?.removeAttribute('disabled');
         }
 
-        this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
+        if (!isRestoring) {
+            this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
+        }
 
         return msg;
     }
@@ -205,7 +207,6 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 
-    // === Sessiebeheer ===
     loadOrCreateSessionId(providedSessionId) {
         let sessionId = sessionStorage.getItem('chatWidgetSessionId');
         if (!sessionId) {
@@ -227,15 +228,15 @@ class ChatWidget {
     }
 
     restoreChatHistory() {
-        if (this.chatRestored) return; // ✅ voorkom dubbelen
-
+        if (this.chatRestored) return;
         const key = `chatWidgetHistory-${this.sessionId}`;
         const history = JSON.parse(sessionStorage.getItem(key)) || [];
 
-        // eventueel: document.getElementById('chatMessages').innerHTML = '';
+        // Zorg dat de chat eerst leeg is voordat je opnieuw toevoegt
+        document.getElementById('chatMessages').innerHTML = '';
 
         history.forEach(entry => {
-            this.addMessage(entry.type, entry.htmlText);
+            this.addMessage(entry.type, entry.htmlText, true); // true = restoring
         });
 
         this.chatRestored = true;

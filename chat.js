@@ -203,3 +203,13 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 }
+
+
+let sessionId = sessionStorage.getItem('chatSessionId');
+if (!sessionId) {
+    sessionId = crypto.randomUUID();
+    sessionStorage.setItem('chatSessionId', sessionId);
+}
+
+// Dan doorgeven aan je widget
+const chat = new ChatWidget(webhookURL, sessionId, userId);

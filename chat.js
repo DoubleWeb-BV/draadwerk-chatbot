@@ -5,7 +5,7 @@ class ChatWidget {
         this.userId = userId;
         this.isOpen = false;
         this.lastBotMessage = null;
-        this.chatRestored = false; // voorkomt meerdere restores
+        this.chatRestored = false;
         this.init();
     }
 
@@ -55,6 +55,7 @@ class ChatWidget {
         this.isOpen = true;
 
         this.restoreChatHistory();
+        this.maybeAddWelcomeMessage();
 
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
     }
@@ -207,6 +208,8 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 
+    // ========== Sessiebeheer ==========
+
     loadOrCreateSessionId(providedSessionId) {
         let sessionId = sessionStorage.getItem('chatWidgetSessionId');
         if (!sessionId) {
@@ -229,14 +232,14 @@ class ChatWidget {
 
     restoreChatHistory() {
         if (this.chatRestored) return;
+
         const key = `chatWidgetHistory-${this.sessionId}`;
         const history = JSON.parse(sessionStorage.getItem(key)) || [];
 
-        // Zorg dat de chat eerst leeg is voordat je opnieuw toevoegt
-        document.getElementById('chatMessages').innerHTML = '';
+        document.getElementById('chatMessages').innerHTML = ''; // voorkom duplicaten
 
         history.forEach(entry => {
-            this.addMessage(entry.type, entry.htmlText, true); // true = restoring
+            this.addMessage(entry.type, entry.htmlText, true);
         });
 
         this.chatRestored = true;
@@ -244,6 +247,19 @@ class ChatWidget {
 
     clearChatHistory() {
         sessionStorage.removeItem(`chatWidgetHistory-${this.sessionId}`);
+        sessionStorage.removeItem(`chatWidgetWelcome-${this.sessionId}`);
         this.chatRestored = false;
+    }
+
+    maybeAddWelcomeMessage() {
+        const welcomeKey = `chatWidgetWelcome-${this.sessionId}`;
+        const alreadyWelcomed = sessionStorage.getItem(welcomeKey);
+        if (!alreadyWelcomed) {
+            this.addMessage(
+                'bot',
+                'Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?'
+            );
+            sessionStorage.setItem(welcomeKey, 'true');
+        }
     }
 }

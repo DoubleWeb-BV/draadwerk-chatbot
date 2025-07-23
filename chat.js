@@ -12,6 +12,7 @@ class ChatWidget {
         this.bindEvents();
         this.showTooltip();
         this.startPulseAnimation();
+        this.restoreMessages(); // Herstel chatgeschiedenis bij init
     }
 
     bindEvents() {
@@ -58,6 +59,8 @@ class ChatWidget {
     closeChat() {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
+        // Optioneel: verwijder berichten bij sluiten
+        // sessionStorage.removeItem('chatMessages');
     }
 
     showTooltip() {
@@ -130,6 +133,9 @@ class ChatWidget {
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
 
+        // Sla bericht op in sessie
+        this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
+
         if (type === 'bot') {
             this.lastBotMessage = msg;
             document.getElementById('thumbsUp')?.removeAttribute('disabled');
@@ -138,7 +144,6 @@ class ChatWidget {
 
         return msg;
     }
-
 
     showTypingIndicator() {
         const indicator = document.createElement('div');
@@ -177,7 +182,6 @@ class ChatWidget {
             this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
         }
 
-        // Disable feedback buttons after use
         thumbsUp.setAttribute('disabled', true);
         thumbsDown.setAttribute('disabled', true);
 
@@ -197,13 +201,25 @@ class ChatWidget {
         });
     }
 
-
-
     handleContact() {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
-}
 
+    saveMessageToSession(message) {
+        const messages = JSON.parse(sessionStorage.getItem('chatMessages') || '[]');
+        messages.push(message);
+        sessionStorage.setItem('chatMessages', JSON.stringify(messages));
+    }
+
+    restoreMessages() {
+        const messages = JSON.parse(sessionStorage.getItem('chatMessages') || '[]');
+        messages.forEach(msg => {
+            this.addMessage(msg.type, msg.htmlText);
+        });
+    }
+}
+const webhookURL = 'https://jouw-endpoint.nl/webhook';
+const userId = null; // optioneel
 
 let sessionId = sessionStorage.getItem('chatSessionId');
 if (!sessionId) {
@@ -211,5 +227,4 @@ if (!sessionId) {
     sessionStorage.setItem('chatSessionId', sessionId);
 }
 
-// Dan doorgeven aan je widget
 const chat = new ChatWidget(webhookURL, sessionId, userId);

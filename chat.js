@@ -5,6 +5,7 @@ class ChatWidget {
         this.userId = userId;
         this.isOpen = false;
         this.lastBotMessage = null;
+        this.chatRestored = false; // ✅ voorkomt dubbelen
         this.init();
     }
 
@@ -52,7 +53,9 @@ class ChatWidget {
         const container = document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
-        this.restoreChatHistory();
+
+        this.restoreChatHistory(); // ✅ wordt maar één keer uitgevoerd
+
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
     }
 
@@ -202,7 +205,7 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 
-    // === Nieuw: sessie-ID beheer ===
+    // === Sessiebeheer ===
     loadOrCreateSessionId(providedSessionId) {
         let sessionId = sessionStorage.getItem('chatWidgetSessionId');
         if (!sessionId) {
@@ -216,7 +219,6 @@ class ChatWidget {
         return 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     }
 
-    // === Nieuw: chatgeschiedenis beheren ===
     saveMessageToSession(message) {
         const key = `chatWidgetHistory-${this.sessionId}`;
         const history = JSON.parse(sessionStorage.getItem(key)) || [];
@@ -225,14 +227,22 @@ class ChatWidget {
     }
 
     restoreChatHistory() {
+        if (this.chatRestored) return; // ✅ voorkom dubbelen
+
         const key = `chatWidgetHistory-${this.sessionId}`;
         const history = JSON.parse(sessionStorage.getItem(key)) || [];
+
+        // eventueel: document.getElementById('chatMessages').innerHTML = '';
+
         history.forEach(entry => {
             this.addMessage(entry.type, entry.htmlText);
         });
+
+        this.chatRestored = true;
     }
 
     clearChatHistory() {
         sessionStorage.removeItem(`chatWidgetHistory-${this.sessionId}`);
+        this.chatRestored = false;
     }
 }

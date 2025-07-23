@@ -1,7 +1,7 @@
 class ChatWidget {
-    constructor(webhookURL, sessionId, userId) {
+    constructor(webhookURL, sessionId = null, userId) {
         this.webhookURL = webhookURL;
-        this.sessionId = sessionId;
+        this.sessionId = this.loadOrCreateSessionId(sessionId);
         this.userId = userId;
         this.isOpen = false;
         this.lastBotMessage = null;
@@ -12,7 +12,6 @@ class ChatWidget {
         this.bindEvents();
         this.showTooltip();
         this.startPulseAnimation();
-        this.restoreMessages(); // Herstel chatgeschiedenis bij init
     }
 
     bindEvents() {
@@ -53,14 +52,13 @@ class ChatWidget {
         const container = document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
+        this.restoreChatHistory();
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
     }
 
     closeChat() {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
-        // Optioneel: verwijder berichten bij sluiten
-        // sessionStorage.removeItem('chatMessages');
     }
 
     showTooltip() {
@@ -125,22 +123,21 @@ class ChatWidget {
         });
 
         msg.innerHTML = `
-        <div class="chat-widget__message-text">${htmlText}</div>
-        <div class="chat-widget__timestamp">${formattedTime}</div>
-    `;
+            <div class="chat-widget__message-text">${htmlText}</div>
+            <div class="chat-widget__timestamp">${formattedTime}</div>
+        `;
 
         const container = document.getElementById('chatMessages');
         container.appendChild(msg);
         container.scrollTop = container.scrollHeight;
-
-        // Sla bericht op in sessie
-        this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
 
         if (type === 'bot') {
             this.lastBotMessage = msg;
             document.getElementById('thumbsUp')?.removeAttribute('disabled');
             document.getElementById('thumbsDown')?.removeAttribute('disabled');
         }
+
+        this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
 
         return msg;
     }
@@ -205,26 +202,37 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 
-    saveMessageToSession(message) {
-        const messages = JSON.parse(sessionStorage.getItem('chatMessages') || '[]');
-        messages.push(message);
-        sessionStorage.setItem('chatMessages', JSON.stringify(messages));
+    // === Nieuw: sessie-ID beheer ===
+    loadOrCreateSessionId(providedSessionId) {
+        let sessionId = sessionStorage.getItem('chatWidgetSessionId');
+        if (!sessionId) {
+            sessionId = providedSessionId || this.generateSessionId();
+            sessionStorage.setItem('chatWidgetSessionId', sessionId);
+        }
+        return sessionId;
     }
 
-    restoreMessages() {
-        const messages = JSON.parse(sessionStorage.getItem('chatMessages') || '[]');
-        messages.forEach(msg => {
-            this.addMessage(msg.type, msg.htmlText);
+    generateSessionId() {
+        return 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    }
+
+    // === Nieuw: chatgeschiedenis beheren ===
+    saveMessageToSession(message) {
+        const key = `chatWidgetHistory-${this.sessionId}`;
+        const history = JSON.parse(sessionStorage.getItem(key)) || [];
+        history.push(message);
+        sessionStorage.setItem(key, JSON.stringify(history));
+    }
+
+    restoreChatHistory() {
+        const key = `chatWidgetHistory-${this.sessionId}`;
+        const history = JSON.parse(sessionStorage.getItem(key)) || [];
+        history.forEach(entry => {
+            this.addMessage(entry.type, entry.htmlText);
         });
     }
-}
-const webhookURL = 'https://jouw-endpoint.nl/webhook';
-const userId = null; // optioneel
 
-let sessionId = sessionStorage.getItem('chatSessionId');
-if (!sessionId) {
-    sessionId = crypto.randomUUID();
-    sessionStorage.setItem('chatSessionId', sessionId);
+    clearChatHistory() {
+        sessionStorage.removeItem(`chatWidgetHistory-${this.sessionId}`);
+    }
 }
-
-const chat = new ChatWidget(webhookURL, sessionId, userId);

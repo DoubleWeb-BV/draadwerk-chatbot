@@ -284,7 +284,7 @@ class ChatWidget {
         if (!alreadyWelcomed) {
             this.addMessage(
                 'bot',
-                'Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?'
+                'Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen? Stel je vraag hieronder.'
             );
             sessionStorage.setItem(welcomeKey, 'true');
         }

@@ -23,6 +23,7 @@ class ChatWidget {
         const thumbsUp = document.getElementById('thumbsUp');
         const thumbsDown = document.getElementById('thumbsDown');
         const contactBtn = document.getElementById('contactBtn');
+        const chatTooltip = document.getElementById('chatTooltip');
 
         chatButton?.addEventListener('click', () => this.toggleChat());
         chatClose?.addEventListener('click', () => this.closeChat());
@@ -41,7 +42,20 @@ class ChatWidget {
         chatInput?.addEventListener('input', (e) => {
             e.target.style.height = 'auto';
             e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
-            chatSend.disabled = e.target.value.trim().length === 0;
+            if (chatSend) chatSend.disabled = e.target.value.trim().length === 0;
+        });
+
+        // Tooltip clickable + keyboard accessible
+        chatTooltip?.addEventListener('click', () => {
+            this.openChat();
+            this.hideTooltip();
+        });
+        chatTooltip?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                this.openChat();
+                this.hideTooltip();
+            }
         });
     }
 
@@ -54,6 +68,7 @@ class ChatWidget {
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
 
+        this.hideTooltip(); // hide tooltip when opening
         this.restoreChatHistory();
         this.maybeAddWelcomeMessage();
 
@@ -67,8 +82,14 @@ class ChatWidget {
 
     showTooltip() {
         setTimeout(() => {
-            document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
+            if (!this.isOpen) {
+                document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
+            }
         }, 5000);
+    }
+
+    hideTooltip() {
+        document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible');
     }
 
     startPulseAnimation() {
@@ -79,13 +100,16 @@ class ChatWidget {
 
     async sendMessage() {
         const input = document.getElementById('chatInput');
-        const message = input.value.trim();
+        const message = input?.value.trim();
         if (!message) return;
 
         this.addMessage('user', message);
-        input.value = '';
-        input.style.height = 'auto';
-        document.getElementById('chatSend').disabled = true;
+        if (input) {
+            input.value = '';
+            input.style.height = 'auto';
+        }
+        const sendBtn = document.getElementById('chatSend');
+        if (sendBtn) sendBtn.disabled = true;
 
         this.showTypingIndicator();
 
@@ -110,6 +134,7 @@ class ChatWidget {
             this.hideTypingIndicator();
             const botMessage = this.addMessage('bot', 'Er ging iets mis.');
             this.lastBotMessage = botMessage;
+            console.error(err);
         }
     }
 
@@ -132,8 +157,8 @@ class ChatWidget {
         `;
 
         const container = document.getElementById('chatMessages');
-        container.appendChild(msg);
-        container.scrollTop = container.scrollHeight;
+        container?.appendChild(msg);
+        if (container) container.scrollTop = container.scrollHeight;
 
         if (type === 'bot') {
             this.lastBotMessage = msg;
@@ -157,8 +182,9 @@ class ChatWidget {
             <div class="chat-widget__typing-dot"></div>
             <div class="chat-widget__typing-dot"></div>
         `;
-        document.getElementById('chatMessages')?.appendChild(indicator);
-        document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+        const messages = document.getElementById('chatMessages');
+        messages?.appendChild(indicator);
+        if (messages) messages.scrollTop = messages.scrollHeight;
     }
 
     hideTypingIndicator() {
@@ -169,7 +195,7 @@ class ChatWidget {
         const thumbsUp = document.getElementById('thumbsUp');
         const thumbsDown = document.getElementById('thumbsDown');
 
-        if (thumbsUp.disabled || thumbsDown.disabled) {
+        if (thumbsUp?.disabled || thumbsDown?.disabled) {
             this.addMessage('bot', 'Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
             return;
         }
@@ -236,7 +262,8 @@ class ChatWidget {
         const key = `chatWidgetHistory-${this.sessionId}`;
         const history = JSON.parse(sessionStorage.getItem(key)) || [];
 
-        document.getElementById('chatMessages').innerHTML = ''; // voorkom duplicaten
+        const messagesEl = document.getElementById('chatMessages');
+        if (messagesEl) messagesEl.innerHTML = ''; // voorkom duplicaten
 
         history.forEach(entry => {
             this.addMessage(entry.type, entry.htmlText, true);

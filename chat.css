@@ -103,6 +103,7 @@ body {
     white-space: nowrap;
     text-align: center;
     line-height: 1.3;
+    cursor: pointer;
 }
 
 .chat-widget__tooltip::after {
@@ -366,6 +367,7 @@ body {
 .chat-widget__input::-webkit-scrollbar {
     display: none;
 }
+
 
 .chat-widget__input:focus {
     border-color: #ff7b61;

@@ -9,12 +9,19 @@ class ChatWidget {
         this.init();
     }
 
+    // ---------- Init ----------
     init() {
         this.bindEvents();
         this.showTooltip();
         this.startPulseAnimation();
     }
 
+    // Small helper to keep the storage key consistent per session
+    getTooltipDismissedKey() {
+        return `chatWidgetTooltipDismissed-${this.sessionId}`;
+    }
+
+    // ---------- Events ----------
     bindEvents() {
         const chatButton = document.getElementById('chatButton');
         const chatClose = document.getElementById('chatClose');
@@ -45,20 +52,52 @@ class ChatWidget {
             if (chatSend) chatSend.disabled = e.target.value.trim().length === 0;
         });
 
-        // Tooltip clickable + keyboard accessible
+        // Tooltip: open chat + permanently hide tooltip (display:none) for this session
         chatTooltip?.addEventListener('click', () => {
             this.openChat();
-            this.hideTooltip();
+            this.dismissTooltip(); // <- display:none + remember
         });
         chatTooltip?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 this.openChat();
-                this.hideTooltip();
+                this.dismissTooltip(); // <- display:none + remember
             }
         });
     }
 
+    // ---------- Tooltip control ----------
+    showTooltip() {
+        setTimeout(() => {
+            const dismissed = sessionStorage.getItem(this.getTooltipDismissedKey());
+            if (!this.isOpen && !dismissed) {
+                document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
+            }
+        }, 5000);
+    }
+
+    // temporary hide (kept for when chat opens via the main button)
+    hideTooltip() {
+        document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible');
+    }
+
+    // permanent hide: display:none and remember for this session
+    dismissTooltip() {
+        const el = document.getElementById('chatTooltip');
+        if (el) {
+            el.classList.remove('chat-widget__tooltip--visible');
+            el.style.display = 'none';
+        }
+        sessionStorage.setItem(this.getTooltipDismissedKey(), 'true');
+    }
+
+    startPulseAnimation() {
+        setTimeout(() => {
+            document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse');
+        }, 10000);
+    }
+
+    // ---------- Open / Close ----------
     toggleChat() {
         this.isOpen ? this.closeChat() : this.openChat();
     }
@@ -68,7 +107,10 @@ class ChatWidget {
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
 
-        this.hideTooltip(); // hide tooltip when opening
+        // If user opened via button, just hide (not dismiss). If they clicked the tooltip,
+        // dismissTooltip() already ran in the click handler.
+        this.hideTooltip();
+
         this.restoreChatHistory();
         this.maybeAddWelcomeMessage();
 
@@ -80,24 +122,7 @@ class ChatWidget {
         this.isOpen = false;
     }
 
-    showTooltip() {
-        setTimeout(() => {
-            if (!this.isOpen) {
-                document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
-            }
-        }, 5000);
-    }
-
-    hideTooltip() {
-        document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible');
-    }
-
-    startPulseAnimation() {
-        setTimeout(() => {
-            document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse');
-        }, 10000);
-    }
-
+    // ---------- Messaging ----------
     async sendMessage() {
         const input = document.getElementById('chatInput');
         const message = input?.value.trim();
@@ -234,8 +259,7 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 010-123-4567<br>📧 Email: info@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 
-    // ========== Sessiebeheer ==========
-
+    // ---------- Session ----------
     loadOrCreateSessionId(providedSessionId) {
         let sessionId = sessionStorage.getItem('chatWidgetSessionId');
         if (!sessionId) {
@@ -275,6 +299,7 @@ class ChatWidget {
     clearChatHistory() {
         sessionStorage.removeItem(`chatWidgetHistory-${this.sessionId}`);
         sessionStorage.removeItem(`chatWidgetWelcome-${this.sessionId}`);
+        sessionStorage.removeItem(this.getTooltipDismissedKey());
         this.chatRestored = false;
     }
 
@@ -284,9 +309,10 @@ class ChatWidget {
         if (!alreadyWelcomed) {
             this.addMessage(
                 'bot',
-                'Hallo! 👋 Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen? Stel je vraag hieronder.'
+                'Hallo! Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen? Stel je vraag hieronder.'
             );
             sessionStorage.setItem(welcomeKey, 'true');
         }
     }
 }
+

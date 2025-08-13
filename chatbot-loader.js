@@ -1,3 +1,4 @@
+// chatbot-loader.js  (no iframe)
 (async function () {
     const ts = Date.now();
     const currentScript = document.currentScript || [...document.scripts].pop();
@@ -19,87 +20,116 @@
         (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
     );
 
-    try {
-        // Assets ophalen
-        const [html, css] = await Promise.all([
-            fetch(htmlURL).then(r => r.text()),
-            fetch(cssURL).then(r => r.text()),
-        ]);
+    // Fetch assets
+    const [html, css] = await Promise.all([
+        fetch(htmlURL).then(r => r.text()),
+        fetch(cssURL).then(r => r.text()),
+    ]);
 
-        // Iframe hosten
-        const frame = document.createElement("iframe");
-        frame.id = "dw-chatbot-frame";
-        frame.title = "Chatbot";
-        Object.assign(frame.style, {
-            position: "fixed",
-            bottom: "16px",
-            right: "16px",
-            width: "380px",   // pas aan naar wens
-            height: "620px",  // pas aan naar wens
-            border: "0",
-            zIndex: "2147483647",
-            background: "transparent",
-        });
-        document.body.appendChild(frame);
+    // Host container (position fixed lives on the light DOM host)
+    const host = document.createElement("div");
+    host.id = "dw-chatbot-host";
+    Object.assign(host.style, {
+        position: "fixed",
+        bottom: "16px",
+        right: "16px",
+        width: "380px",
+        height: "620px",
+        zIndex: "2147483647",
+    });
+    document.body.appendChild(host);
 
-        const doc = frame.contentDocument || frame.contentWindow.document;
-        doc.open();
-        doc.write(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>${css}</style>
-</head>
-<body>
-  <!-- Chat HTML -->
-  <div id="dw-chatbot-root">${html}</div>
+    // Shadow DOM (isolates CSS from the page)
+    const shadow = host.attachShadow({ mode: "open" });
 
-  <script>
-    (function () {
-      // Profielfoto's instellen binnen het iframe
-      var imgURL = ${JSON.stringify(imgURL)};
-      var profileImage1 = document.getElementById('js-profile-image');
-      if (profileImage1) {
-        profileImage1.src = imgURL;
-        profileImage1.onerror = function () {
-          profileImage1.src = 'https://via.placeholder.com/40?text=?';
-        };
-      }
-      var profileImage2 = document.getElementById('js-profile-image-2');
-      if (profileImage2) {
-        profileImage2.src = imgURL;
-        profileImage2.onerror = function () {
-          profileImage2.src = 'https://via.placeholder.com/40?text=?';
-        };
-      }
+    // Optional: base reset inside shadow (keeps things predictable)
+    const reset = `
+    :host, :host * { box-sizing: border-box; }
+    :host { all: initial; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+  `;
 
-      // Config beschikbaar maken voor chat.js
-      window.__DW_CONFIG__ = {
-        webhookURL: ${JSON.stringify(webhookURL)},
-        sessionId: ${JSON.stringify(sessionId)},
-        userId: ${JSON.stringify(userId)}
-      };
-    })();
-  </script>
-
-  <script src="${jsURL}"></script>
-  <script>
-    // Initialiseren in het iframe-document
-    if (typeof ChatWidget !== 'undefined') {
-      new ChatWidget(
-        window.__DW_CONFIG__.webhookURL,
-        window.__DW_CONFIG__.sessionId,
-        window.__DW_CONFIG__.userId
-      );
+    // Add CSS to shadow (prefer Constructable Stylesheets for perf)
+    if ("adoptedStyleSheets" in Document.prototype && "replace" in CSSStyleSheet.prototype) {
+        const sheet = new CSSStyleSheet();
+        await sheet.replace(`${reset}\n${css}`);
+        shadow.adoptedStyleSheets = [sheet];
     } else {
-      console.error("[Chatbot Loader] ChatWidget niet gevonden in iframe.");
+        const style = document.createElement("style");
+        style.textContent = `${reset}\n${css}`;
+        shadow.appendChild(style);
     }
-  </script>
-</body>
-</html>`);
-        doc.close();
-    } catch (err) {
-        console.error("[Chatbot Loader] Fout bij laden:", err);
+
+    // Insert HTML
+    const root = document.createElement("div");
+    root.id = "dw-chatbot-root";
+    root.innerHTML = html;
+    shadow.appendChild(root);
+
+    // Profile images inside shadow
+    const setImg = (id) => {
+        const el = root.querySelector(`#${id}`);
+        if (el) {
+            el.src = imgURL;
+            el.onerror = () => { el.src = 'https://via.placeholder.com/40?text=?'; };
+        }
+    };
+    setImg('js-profile-image');
+    setImg('js-profile-image-2');
+
+    // Smart link handling: same-origin -> same tab; external -> new tab
+    root.addEventListener('click', (e) => {
+        const a = e.target.closest('a');
+        if (!a) return;
+        // If link lacks href, ignore
+        const href = a.getAttribute('href');
+        if (!href) return;
+
+        // Normalize absolute URL
+        const url = new URL(href, window.location.href);
+        const isSameOrigin = url.origin === window.location.origin;
+
+        // Never let it be handled by default inside the shadow
+        e.preventDefault();
+
+        if (isSameOrigin) {
+            // Same site: same tab
+            window.location.assign(url.href);
+        } else {
+            // External: new tab, safe features
+            window.open(url.href, "_blank", "noopener,noreferrer");
+        }
+    });
+
+    // Make config available
+    const CONFIG = { webhookURL, sessionId, userId };
+    window.__DW_CONFIG__ = CONFIG;
+
+    // Load widget JS once, then mount into shadow root
+    await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = jsURL;
+        s.async = true;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+    });
+
+    // Instantiate/mount. Requires chat.js to accept a `root` option (see patch below).
+    if (typeof window.ChatWidget === "function") {
+        // Prefer: new ChatWidget(CONFIG).mount(root)
+        // Fallback: pass root via options if constructor supports it
+        try {
+            if ("mount" in window.ChatWidget.prototype) {
+                const w = new window.ChatWidget(CONFIG);
+                w.mount(root);
+            } else {
+                // Constructor(root) variant, backward-compatible path if you implement it
+                new window.ChatWidget(CONFIG, { root });
+            }
+        } catch (err) {
+            console.error("[Chatbot Loader] Kon de ChatWidget niet mounten:", err);
+        }
+    } else {
+        console.error("[Chatbot Loader] ChatWidget niet gevonden.");
     }
 })();

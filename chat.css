@@ -29,6 +29,7 @@
     transition: all 0.3s ease;
     animation: fadeIn 0.5s ease;
     position: relative;
+    padding: 0;
 }
 
 #chat-widget .chat-widget__button:hover {

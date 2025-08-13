@@ -47,8 +47,7 @@ class ChatWidget {
         });
 
         chatInput?.addEventListener('input', (e) => {
-            e.target.style.height = 'auto';
-            e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px';
+            // CHANGED: removed auto-resize lines; keep only send-button enable/disable
             if (chatSend) chatSend.disabled = e.target.value.trim().length === 0;
         });
 
@@ -131,7 +130,7 @@ class ChatWidget {
         this.addMessage('user', message);
         if (input) {
             input.value = '';
-            input.style.height = 'auto';
+            // CHANGED: removed input.style.height reset
         }
         const sendBtn = document.getElementById('chatSend');
         if (sendBtn) sendBtn.disabled = true;
@@ -315,4 +314,3 @@ class ChatWidget {
         }
     }
 }
-

@@ -7,34 +7,6 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-}
-
-.demo-content {
-    background: white;
-    padding: 40px;
-    border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-    text-align: center;
-    max-width: 600px;
-}
-
-.demo-content h1 {
-    color: #2c3e50;
-    margin-bottom: 10px;
-    font-size: 2.5em;
-    font-weight: 700;
-}
-
-.demo-content p {
-    color: #6c757d;
-    font-size: 1.2em;
-    line-height: 1.6;
 }
 
 /* Chat Widget Styles */

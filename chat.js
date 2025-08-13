@@ -9,9 +9,15 @@ class ChatWidget {
         this.init();
     }
 
+    // ----- NEW: storage key for open state -----
+    getOpenStateKey() {
+        return `chatWidgetIsOpen-${this.sessionId}`;
+    }
+
     // ---------- Init ----------
     init() {
         this.bindEvents();
+        this.restoreOpenState();     // ← CHANGED: restore open/closed BEFORE tooltip logic
         this.showTooltip();
         this.startPulseAnimation();
     }
@@ -47,20 +53,18 @@ class ChatWidget {
         });
 
         chatInput?.addEventListener('input', (e) => {
-            // CHANGED: removed auto-resize lines; keep only send-button enable/disable
             if (chatSend) chatSend.disabled = e.target.value.trim().length === 0;
         });
 
-        // Tooltip: open chat + permanently hide tooltip (display:none) for this session
         chatTooltip?.addEventListener('click', () => {
             this.openChat();
-            this.dismissTooltip(); // <- display:none + remember
+            this.dismissTooltip();
         });
         chatTooltip?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 this.openChat();
-                this.dismissTooltip(); // <- display:none + remember
+                this.dismissTooltip();
             }
         });
     }
@@ -75,12 +79,10 @@ class ChatWidget {
         }, 5000);
     }
 
-    // temporary hide (kept for when chat opens via the main button)
     hideTooltip() {
         document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible');
     }
 
-    // permanent hide: display:none and remember for this session
     dismissTooltip() {
         const el = document.getElementById('chatTooltip');
         if (el) {
@@ -106,10 +108,10 @@ class ChatWidget {
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
 
-        // If user opened via button, just hide (not dismiss). If they clicked the tooltip,
-        // dismissTooltip() already ran in the click handler.
-        this.hideTooltip();
+        // ----- NEW: persist open state -----
+        sessionStorage.setItem(this.getOpenStateKey(), 'true');
 
+        this.hideTooltip();
         this.restoreChatHistory();
         this.maybeAddWelcomeMessage();
 
@@ -119,6 +121,18 @@ class ChatWidget {
     closeChat() {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
+
+        // ----- NEW: persist closed state -----
+        sessionStorage.setItem(this.getOpenStateKey(), 'false');
+    }
+
+    // ----- NEW: restore open/closed state on load -----
+    restoreOpenState() {
+        const wasOpen = sessionStorage.getItem(this.getOpenStateKey());
+        if (wasOpen === 'true') {
+            // Defer slightly so DOM is ready if constructor runs early
+            requestAnimationFrame(() => this.openChat());
+        }
     }
 
     // ---------- Messaging ----------
@@ -130,7 +144,6 @@ class ChatWidget {
         this.addMessage('user', message);
         if (input) {
             input.value = '';
-            // CHANGED: removed input.style.height reset
         }
         const sendBtn = document.getElementById('chatSend');
         if (sendBtn) sendBtn.disabled = true;
@@ -152,7 +165,10 @@ class ChatWidget {
 
             const { text } = await res.json();
             this.hideTypingIndicator();
-            const botMessage = this.addMessage('bot', (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>'));
+
+            // NOTE: you currently inject <br>. If you want to avoid <br>, replace with <p> blocks instead.
+            const botHTML = (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>');
+            const botMessage = this.addMessage('bot', botHTML);
             this.lastBotMessage = botMessage;
         } catch (err) {
             this.hideTypingIndicator();
@@ -176,9 +192,9 @@ class ChatWidget {
         });
 
         msg.innerHTML = `
-            <div class="chat-widget__message-text">${htmlText}</div>
-            <div class="chat-widget__timestamp">${formattedTime}</div>
-        `;
+      <div class="chat-widget__message-text">${htmlText}</div>
+      <div class="chat-widget__timestamp">${formattedTime}</div>
+    `;
 
         const container = document.getElementById('chatMessages');
         container?.appendChild(msg);
@@ -202,10 +218,10 @@ class ChatWidget {
         indicator.id = 'typingIndicator';
         indicator.className = 'chat-widget__typing chat-widget__typing--visible';
         indicator.innerHTML = `
-            <div class="chat-widget__typing-dot"></div>
-            <div class="chat-widget__typing-dot"></div>
-            <div class="chat-widget__typing-dot"></div>
-        `;
+      <div class="chat-widget__typing-dot"></div>
+      <div class="chat-widget__typing-dot"></div>
+      <div class="chat-widget__typing-dot"></div>
+    `;
         const messages = document.getElementById('chatMessages');
         messages?.appendChild(indicator);
         if (messages) messages.scrollTop = messages.scrollHeight;
@@ -299,6 +315,7 @@ class ChatWidget {
         sessionStorage.removeItem(`chatWidgetHistory-${this.sessionId}`);
         sessionStorage.removeItem(`chatWidgetWelcome-${this.sessionId}`);
         sessionStorage.removeItem(this.getTooltipDismissedKey());
+        sessionStorage.removeItem(this.getOpenStateKey()); // ← NEW
         this.chatRestored = false;
     }
 

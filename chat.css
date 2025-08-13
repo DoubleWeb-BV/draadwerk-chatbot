@@ -16,6 +16,11 @@
     flex-direction: column;
     gap: 10px;
 }
+
+#chat-widget a{
+    color: #ff7b61;
+}
+
 #chat-widget .chat-widget__button {
     width: 60px;
     height: 60px;

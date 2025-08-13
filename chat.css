@@ -18,6 +18,11 @@ body {
     font-family: inherit;
 }
 
+.chat-widget__message-text {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
 .chat-widget__button {
     width: 60px;
     height: 60px;

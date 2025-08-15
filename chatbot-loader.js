@@ -11,7 +11,7 @@
     const cssURL  = `${baseCDN}chat.css?ts=${timestamp}`;
     const htmlURL = `${baseCDN}chat.html?ts=${timestamp}`;
     const jsURL   = `${baseCDN}chat.js?ts=${timestamp}`;
-    const imgURL  = `${baseCDN}profile.jpg?ts=${timestamp}`;
+    const imgURL  = `${baseCDN}profile.png?ts=${timestamp}`;
 
     try {
         // CSS injecteren en wachten tot geladen

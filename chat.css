@@ -31,7 +31,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 4px 20px rgba(255, 123, 97, 0.3);
     transition: all 0.3s ease;
     animation: fadeIn 0.5s ease;
     position: relative;

@@ -9,22 +9,27 @@ class ChatWidget {
         this.init();
     }
 
-    // ----- NEW: storage key for open state -----
+    // ----- Storage helper (shared across tabs) -----
+    get storage() {
+        return window.localStorage;
+    }
+
+    // ----- Keys -----
     getOpenStateKey() {
         return `chatWidgetIsOpen-${this.sessionId}`;
+    }
+
+    getTooltipDismissedKey() {
+        return `chatWidgetTooltipDismissed-${this.sessionId}`;
     }
 
     // ---------- Init ----------
     init() {
         this.bindEvents();
-        this.restoreOpenState();     // ← CHANGED: restore open/closed BEFORE tooltip logic
+        this.setupCrossTabSync();    // listen for other tabs
+        this.restoreOpenState();     // restore open/closed BEFORE tooltip logic
         this.showTooltip();
         this.startPulseAnimation();
-    }
-
-    // Small helper to keep the storage key consistent per session
-    getTooltipDismissedKey() {
-        return `chatWidgetTooltipDismissed-${this.sessionId}`;
     }
 
     // ---------- Events ----------
@@ -69,10 +74,38 @@ class ChatWidget {
         });
     }
 
+    // ---------- Cross-tab sync ----------
+    setupCrossTabSync() {
+        window.addEventListener('storage', (e) => {
+            if (!e.key) return;
+
+            // Sync open/closed state
+            if (e.key === this.getOpenStateKey()) {
+                const shouldBeOpen = this.storage.getItem(this.getOpenStateKey()) === 'true';
+                if (shouldBeOpen && !this.isOpen) this.openChat();
+                if (!shouldBeOpen && this.isOpen) this.closeChat();
+                return;
+            }
+
+            // Sync messages when history changes
+            if (e.key === `chatWidgetHistory-${this.sessionId}`) {
+                this.chatRestored = false;
+                this.restoreChatHistory();
+                return;
+            }
+
+            // Sync tooltip dismissal
+            if (e.key === this.getTooltipDismissedKey()) {
+                const dismissed = this.storage.getItem(this.getTooltipDismissedKey()) === 'true';
+                if (dismissed) this.hideTooltip();
+            }
+        });
+    }
+
     // ---------- Tooltip control ----------
     showTooltip() {
         setTimeout(() => {
-            const dismissed = sessionStorage.getItem(this.getTooltipDismissedKey());
+            const dismissed = this.storage.getItem(this.getTooltipDismissedKey());
             if (!this.isOpen && !dismissed) {
                 document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
             }
@@ -89,7 +122,7 @@ class ChatWidget {
             el.classList.remove('chat-widget__tooltip--visible');
             el.style.display = 'none';
         }
-        sessionStorage.setItem(this.getTooltipDismissedKey(), 'true');
+        this.storage.setItem(this.getTooltipDismissedKey(), 'true');
     }
 
     startPulseAnimation() {
@@ -108,8 +141,8 @@ class ChatWidget {
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
 
-        // ----- NEW: persist open state -----
-        sessionStorage.setItem(this.getOpenStateKey(), 'true');
+        // persist open state (shared across tabs)
+        this.storage.setItem(this.getOpenStateKey(), 'true');
 
         this.hideTooltip();
         this.restoreChatHistory();
@@ -122,13 +155,13 @@ class ChatWidget {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
 
-        // ----- NEW: persist closed state -----
-        sessionStorage.setItem(this.getOpenStateKey(), 'false');
+        // persist closed state (shared across tabs)
+        this.storage.setItem(this.getOpenStateKey(), 'false');
     }
 
-    // ----- NEW: restore open/closed state on load -----
+    // restore open/closed state on load
     restoreOpenState() {
-        const wasOpen = sessionStorage.getItem(this.getOpenStateKey());
+        const wasOpen = this.storage.getItem(this.getOpenStateKey());
         if (wasOpen === 'true') {
             // Defer slightly so DOM is ready if constructor runs early
             requestAnimationFrame(() => this.openChat());
@@ -276,10 +309,11 @@ class ChatWidget {
 
     // ---------- Session ----------
     loadOrCreateSessionId(providedSessionId) {
-        let sessionId = sessionStorage.getItem('chatWidgetSessionId');
+        // Single id across tabs for this origin
+        let sessionId = this.storage.getItem('chatWidgetSessionId');
         if (!sessionId) {
             sessionId = providedSessionId || this.generateSessionId();
-            sessionStorage.setItem('chatWidgetSessionId', sessionId);
+            this.storage.setItem('chatWidgetSessionId', sessionId);
         }
         return sessionId;
     }
@@ -290,19 +324,21 @@ class ChatWidget {
 
     saveMessageToSession(message) {
         const key = `chatWidgetHistory-${this.sessionId}`;
-        const history = JSON.parse(sessionStorage.getItem(key)) || [];
+        const history = JSON.parse(this.storage.getItem(key) || '[]');
         history.push(message);
-        sessionStorage.setItem(key, JSON.stringify(history));
+        this.storage.setItem(key, JSON.stringify(history));
+        // trigger cross-tab sync via storage event
+        // (setItem already triggers it in other tabs)
     }
 
     restoreChatHistory() {
         if (this.chatRestored) return;
 
         const key = `chatWidgetHistory-${this.sessionId}`;
-        const history = JSON.parse(sessionStorage.getItem(key)) || [];
+        const history = JSON.parse(this.storage.getItem(key) || '[]');
 
         const messagesEl = document.getElementById('chatMessages');
-        if (messagesEl) messagesEl.innerHTML = ''; // voorkom duplicaten
+        if (messagesEl) messagesEl.innerHTML = ''; // prevent duplicates
 
         history.forEach(entry => {
             this.addMessage(entry.type, entry.htmlText, true);
@@ -312,22 +348,23 @@ class ChatWidget {
     }
 
     clearChatHistory() {
-        sessionStorage.removeItem(`chatWidgetHistory-${this.sessionId}`);
-        sessionStorage.removeItem(`chatWidgetWelcome-${this.sessionId}`);
-        sessionStorage.removeItem(this.getTooltipDismissedKey());
-        sessionStorage.removeItem(this.getOpenStateKey()); // ← NEW
+        this.storage.removeItem(`chatWidgetHistory-${this.sessionId}`);
+        this.storage.removeItem(`chatWidgetWelcome-${this.sessionId}`);
+        this.storage.removeItem(this.getTooltipDismissedKey());
+        this.storage.removeItem(this.getOpenStateKey());
         this.chatRestored = false;
     }
 
     maybeAddWelcomeMessage() {
         const welcomeKey = `chatWidgetWelcome-${this.sessionId}`;
-        const alreadyWelcomed = sessionStorage.getItem(welcomeKey);
+        const alreadyWelcomed = this.storage.getItem(welcomeKey);
         if (!alreadyWelcomed) {
             this.addMessage(
                 'bot',
                 'Hallo! Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen? Stel je vraag hieronder.'
             );
-            sessionStorage.setItem(welcomeKey, 'true');
+            this.storage.setItem(welcomeKey, 'true');
         }
     }
 }
+

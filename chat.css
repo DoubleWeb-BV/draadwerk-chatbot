@@ -254,6 +254,7 @@
 
 #chat-widget .chat-widget__message ul{
     padding-left: 16px;
+    list-style-type: disc;
 }
 
 #chat-widget .chat-widget__message {
@@ -409,6 +410,7 @@
     color: #999;
     margin-top: 4px;
     text-align: right;
+    display:none;
 }
 
 

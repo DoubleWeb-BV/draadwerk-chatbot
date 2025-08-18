@@ -12,6 +12,10 @@ class ChatWidget {
         this.KEY_OPEN = null;        // depends on sessionId
         this.KEY_TOOLTIP = null;     // depends on sessionId
 
+        // Nieuw: marker voor "misschien gesloten" + grace period
+        this.KEY_MAYBE_CLOSED_AT = this.LS_PREFIX + "maybeClosedAt";
+        this.GRACE_MS = 5000;
+
         // State
         this.isOpen = false;
         this.lastBotMessage = null;
@@ -48,13 +52,16 @@ class ChatWidget {
         window.addEventListener("beforeunload", () => {
             const current = parseInt(this.lsGet(this.KEY_TABS) || "0", 10);
             const next = Math.max(0, current - 1);
+
+            // Altijd teller bijwerken
+            this.lsSet(this.KEY_TABS, String(next));
+
             if (next === 0) {
-                // Last tab going away: nuke the whole chat state so a brand-new session starts next time
-                this.clearAllPersistentState();
-            } else {
-                this.lsSet(this.KEY_TABS, String(next));
+                // Niet direct wissen; markeer dat het 'misschien' sluiten is (kan navigatie zijn)
+                this.lsSet(this.KEY_MAYBE_CLOSED_AT, String(Date.now()));
             }
-            // Broadcast so sibling tabs (if any) can react promptly
+
+            // Broadcast zodat sibling tabs (indien aanwezig) kunnen reageren
             this.postChannel({ type: "tabCountChanged", openTabs: next });
         }, { capture: true });
     }
@@ -70,6 +77,7 @@ class ChatWidget {
         }
         this.lsRemove(this.KEY_SESSION_ID);
         this.lsRemove(this.KEY_TABS);
+        this.lsRemove(this.KEY_MAYBE_CLOSED_AT); // nieuw
     }
 
     // ---------- Session ID ----------
@@ -92,12 +100,30 @@ class ChatWidget {
 
     // ---------- Init ----------
     init() {
+        // 0) Vroege check: als we binnen de grace period opnieuw laden, beschouw het als navigatie en annuleer de marker
+        const maybeClosedAt = parseInt(this.lsGet(this.KEY_MAYBE_CLOSED_AT) || "0", 10);
+        if (maybeClosedAt && (Date.now() - maybeClosedAt) < this.GRACE_MS) {
+            this.lsRemove(this.KEY_MAYBE_CLOSED_AT);
+        }
+
         this.bindEvents();
         this.setupBroadcastChannel();
         this.setupStorageSync();
         this.restoreOpenState();     // restore open/closed BEFORE tooltip logic
         this.showTooltip();
         this.startPulseAnimation();
+
+        // 1) Uitgestelde "definitieve opruim"-check
+        setTimeout(() => {
+            const openTabs = parseInt(this.lsGet(this.KEY_TABS) || "0", 10);
+            const mark = parseInt(this.lsGet(this.KEY_MAYBE_CLOSED_AT) || "0", 10);
+
+            // Alleen wissen als er echt geen tab is teruggekomen ná de grace period
+            if (openTabs === 0 && mark && (Date.now() - mark) >= this.GRACE_MS) {
+                this.clearAllPersistentState();
+                this.lsRemove(this.KEY_MAYBE_CLOSED_AT);
+            }
+        }, this.GRACE_MS + 500); // kleine marge bovenop grace
     }
 
     // ---------- Events ----------

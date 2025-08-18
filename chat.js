@@ -5,16 +5,19 @@ class ChatWidget {
 
         // ----- Constants / keys
         this.LS_PREFIX = "dwChat:";
-        this.KEY_TABS = this.LS_PREFIX + "openTabs"; // integer counter
         this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
-        this.KEY_HISTORY = null;     // depends on sessionId
-        this.KEY_WELCOME = null;     // depends on sessionId
-        this.KEY_OPEN = null;        // depends on sessionId
-        this.KEY_TOOLTIP = null;     // depends on sessionId
+        this.KEY_HISTORY    = null; // depends on sessionId
+        this.KEY_WELCOME    = null; // depends on sessionId
+        this.KEY_OPEN       = null; // depends on sessionId
+        this.KEY_TOOLTIP    = null; // depends on sessionId
 
-        // Close marker + grace period
-        this.KEY_MAYBE_CLOSED_AT = this.LS_PREFIX + "maybeClosedAt";
-        this.GRACE_MS = 5000;
+        // New: tab fingerprint + last-seen heartbeat
+        this.SS_TAB_ID      = this.LS_PREFIX + "tabId";         // sessionStorage
+        this.KEY_LAST_SEEN  = this.LS_PREFIX + "lastSeen";      // localStorage
+        this.RESET_MS       = 4000; // treat as "fresh browser start" if lastSeen is older than this AND no tabId
+
+        // (Optional) keep for broadcast/history sync; no longer used for destructive cleanup
+        this.KEY_TABS       = this.LS_PREFIX + "openTabs";
 
         // State
         this.isOpen = false;
@@ -24,7 +27,13 @@ class ChatWidget {
         // Cross-tab channel
         this.channel = null;
 
-        // Create/adopt shared sessionId
+        // STEP 1: Create/adopt per-tab fingerprint BEFORE anything else
+        this.adoptOrCreateTabId();
+
+        // STEP 2: Fresh-start detection (runs only when there is NO tabId — i.e., truly new tab/window)
+        this.maybeResetForNewBrowser();
+
+        // STEP 3: Create/adopt shared sessionId (per whole-site session)
         this.sessionId = this.loadOrCreateSessionId(sessionId);
 
         // Per-session keys
@@ -33,11 +42,7 @@ class ChatWidget {
         this.KEY_OPEN    = `${this.LS_PREFIX}isOpen:${this.sessionId}`;
         this.KEY_TOOLTIP = `${this.LS_PREFIX}tooltipDismissed:${this.sessionId}`;
 
-        // IMPORTANT: finalize any previous "all tabs closed" state BEFORE we register this new tab
-        this.finalizeCloseIfNeeded();
-
-        // Register this tab and init
-        this.registerTab();
+        // Init
         this.init();
     }
 
@@ -45,57 +50,67 @@ class ChatWidget {
     lsGet(key) { return localStorage.getItem(key); }
     lsSet(key, val) { localStorage.setItem(key, val); }
     lsRemove(key) { localStorage.removeItem(key); }
+    ssGet(key) { return sessionStorage.getItem(key); }
+    ssSet(key, val) { sessionStorage.setItem(key, val); }
+    ssRemove(key) { sessionStorage.removeItem(key); }
 
-    // ---------- Finalize previous close (runs on startup, before registerTab) ----------
-    finalizeCloseIfNeeded() {
-        const openTabs = parseInt(this.lsGet(this.KEY_TABS) || "0", 10);
-        const mark = parseInt(this.lsGet(this.KEY_MAYBE_CLOSED_AT) || "0", 10);
-
-        if (openTabs === 0 && mark) {
-            const age = Date.now() - mark;
-            if (age >= this.GRACE_MS) {
-                // Truly closed previously → wipe now
-                this.clearAllPersistentState();
-                this.lsRemove(this.KEY_MAYBE_CLOSED_AT);
-            } else {
-                // Likely a same-tab navigation → keep state, remove marker
-                this.lsRemove(this.KEY_MAYBE_CLOSED_AT);
-            }
+    // ---------- Tab fingerprint & browser-new detection ----------
+    adoptOrCreateTabId() {
+        // If a tabId already exists in sessionStorage, this is the SAME TAB (navigating/reloading).
+        let tabId = this.ssGet(this.SS_TAB_ID);
+        if (!tabId) {
+            tabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
+            this.ssSet(this.SS_TAB_ID, tabId);
+            // Mark this as a brand-new tab load (used in maybeResetForNewBrowser)
+            this._isBrandNewTab = true;
+        } else {
+            this._isBrandNewTab = false;
         }
     }
 
-    // ---------- Tab lifecycle ----------
-    registerTab() {
-        const count = parseInt(this.lsGet(this.KEY_TABS) || "0", 10);
-        this.lsSet(this.KEY_TABS, String(count + 1));
+    maybeResetForNewBrowser() {
+        // If we are a brand-new tab/window (no sessionStorage previously),
+        // and the site hasn't been "seen" for longer than RESET_MS, treat as fresh browser start.
+        const lastSeen = parseInt(this.lsGet(this.KEY_LAST_SEEN) || "0", 10);
+        const now = Date.now();
 
-        // On tab/window closing: decrement and set a "maybe closed" marker if last one
-        window.addEventListener("beforeunload", () => {
-            const current = parseInt(this.lsGet(this.KEY_TABS) || "0", 10);
-            const next = Math.max(0, current - 1);
-
-            this.lsSet(this.KEY_TABS, String(next));
-            if (next === 0) {
-                // Don’t clear now (no JS will be running) — just mark the time.
-                this.lsSet(this.KEY_MAYBE_CLOSED_AT, String(Date.now()));
+        if (this._isBrandNewTab && (now - lastSeen) > this.RESET_MS) {
+            // Truly new session: wipe chat state (but NOT immediately removing our fresh tabId)
+            const sid = this.lsGet(this.KEY_SESSION_ID);
+            if (sid) {
+                this.lsRemove(`${this.LS_PREFIX}history:${sid}`);
+                this.lsRemove(`${this.LS_PREFIX}welcome:${sid}`);
+                this.lsRemove(`${this.LS_PREFIX}isOpen:${sid}`);
+                this.lsRemove(`${this.LS_PREFIX}tooltipDismissed:${sid}`);
             }
+            this.lsRemove(this.KEY_SESSION_ID);
+            // keep KEY_TABS untouched (no longer used for destructive logic)
+        }
 
-            this.postChannel({ type: "tabCountChanged", openTabs: next });
-        }, { capture: true });
+        // Update lastSeen right away on load
+        this.lsSet(this.KEY_LAST_SEEN, String(now));
+
+        // Keep lastSeen fresh while page is alive (covers idle tabs)
+        this.installHeartbeat();
     }
 
-    clearAllPersistentState() {
-        // Remove everything related to the chat so a fresh session starts next time the site opens
-        const sessionId = this.lsGet(this.KEY_SESSION_ID);
-        if (sessionId) {
-            this.lsRemove(`${this.LS_PREFIX}history:${sessionId}`);
-            this.lsRemove(`${this.LS_PREFIX}welcome:${sessionId}`);
-            this.lsRemove(`${this.LS_PREFIX}isOpen:${sessionId}`);
-            this.lsRemove(`${this.LS_PREFIX}tooltipDismissed:${sessionId}`);
-        }
-        this.lsRemove(this.KEY_SESSION_ID);
-        this.lsRemove(this.KEY_TABS);
-        this.lsRemove(this.KEY_MAYBE_CLOSED_AT);
+    installHeartbeat() {
+        // Update on visibility changes
+        document.addEventListener('visibilitychange', () => {
+            this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
+        });
+
+        // Update on pagehide/unload transitions
+        window.addEventListener('pagehide', () => {
+            this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
+        });
+
+        // Light heartbeat every 2s while visible
+        this._heartbeat = setInterval(() => {
+            if (!document.hidden) {
+                this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
+            }
+        }, 2000);
     }
 
     // ---------- Session ID ----------
@@ -112,7 +127,7 @@ class ChatWidget {
         return 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     }
 
-    // ---------- Keys (for compatibility with your earlier getters) ----------
+    // ---------- Keys (compat) ----------
     getOpenStateKey() { return this.KEY_OPEN; }
     getTooltipDismissedKey() { return this.KEY_TOOLTIP; }
 
@@ -166,6 +181,11 @@ class ChatWidget {
                 this.dismissTooltip();
             }
         });
+
+        // Keep lastSeen fresh on user activity too
+        ['click','keydown','scroll','pointerdown'].forEach(evt =>
+            window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN, String(Date.now())), { passive: true })
+        );
     }
 
     // ---------- Cross-tab sync (fast channel) ----------
@@ -221,6 +241,8 @@ class ChatWidget {
                 if (dismissed) this.hideTooltip();
                 return;
             }
+
+            // lastSeen changes are informational; nothing to do
         });
     }
 

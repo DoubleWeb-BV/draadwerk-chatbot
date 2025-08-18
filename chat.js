@@ -1,55 +1,100 @@
 class ChatWidget {
     constructor(webhookURL, sessionId = null, userId) {
         this.webhookURL = webhookURL;
-        this.groupId = this.initGroupId();                 // ← session-scoped namespace
-        this.sessionId = this.loadOrCreateSessionId(sessionId);
         this.userId = userId;
+
+        // ----- Constants / keys
+        this.LS_PREFIX = "dwChat:";
+        this.KEY_TABS = this.LS_PREFIX + "openTabs"; // integer counter
+        this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
+        this.KEY_HISTORY = null;     // depends on sessionId
+        this.KEY_WELCOME = null;     // depends on sessionId
+        this.KEY_OPEN = null;        // depends on sessionId
+        this.KEY_TOOLTIP = null;     // depends on sessionId
+
+        // State
         this.isOpen = false;
         this.lastBotMessage = null;
         this.chatRestored = false;
+
+        // Cross-tab channel (lives only while browser is open)
+        this.channel = null;
+
+        // Create or adopt a shared sessionId (cleared when all tabs close)
+        this.sessionId = this.loadOrCreateSessionId(sessionId);
+
+        // Now that we know the session, derive per-session keys
+        this.KEY_HISTORY = `${this.LS_PREFIX}history:${this.sessionId}`;
+        this.KEY_WELCOME = `${this.LS_PREFIX}welcome:${this.sessionId}`;
+        this.KEY_OPEN    = `${this.LS_PREFIX}isOpen:${this.sessionId}`;
+        this.KEY_TOOLTIP = `${this.LS_PREFIX}tooltipDismissed:${this.sessionId}`;
+
+        // Register this tab and init
+        this.registerTab();
         this.init();
     }
 
-    // ----- Session "group" that lasts only while the browser is open -----
-    initGroupId() {
-        // One id per *browser session* (sessionStorage survives across tabs but
-        // disappears when the browser (or all windows) close)
-        let gid = sessionStorage.getItem('chatWidgetGroupId');
-        if (!gid) {
-            gid = 'grp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
-            sessionStorage.setItem('chatWidgetGroupId', gid);
+    // ---------- Storage helpers ----------
+    lsGet(key) { return localStorage.getItem(key); }
+    lsSet(key, val) { localStorage.setItem(key, val); }
+    lsRemove(key) { localStorage.removeItem(key); }
+
+    // ---------- Tab lifecycle ----------
+    registerTab() {
+        const count = parseInt(this.lsGet(this.KEY_TABS) || "0", 10);
+        this.lsSet(this.KEY_TABS, String(count + 1));
+
+        // On tab/window closing: decrement and possibly clear all data
+        window.addEventListener("beforeunload", () => {
+            const current = parseInt(this.lsGet(this.KEY_TABS) || "0", 10);
+            const next = Math.max(0, current - 1);
+            if (next === 0) {
+                // Last tab going away: nuke the whole chat state so a brand-new session starts next time
+                this.clearAllPersistentState();
+            } else {
+                this.lsSet(this.KEY_TABS, String(next));
+            }
+            // Broadcast so sibling tabs (if any) can react promptly
+            this.postChannel({ type: "tabCountChanged", openTabs: next });
+        }, { capture: true });
+    }
+
+    clearAllPersistentState() {
+        // Remove everything related to the chat so a fresh session starts next time the site opens
+        const sessionId = this.lsGet(this.KEY_SESSION_ID);
+        if (sessionId) {
+            this.lsRemove(`${this.LS_PREFIX}history:${sessionId}`);
+            this.lsRemove(`${this.LS_PREFIX}welcome:${sessionId}`);
+            this.lsRemove(`${this.LS_PREFIX}isOpen:${sessionId}`);
+            this.lsRemove(`${this.LS_PREFIX}tooltipDismissed:${sessionId}`);
         }
-        // Optional: publish current group for debugging/inspection
-        localStorage.setItem('chatWidgetCurrentGroupId', gid);
-        return gid;
+        this.lsRemove(this.KEY_SESSION_ID);
+        this.lsRemove(this.KEY_TABS);
     }
 
-    // ----- Storage helpers (namespaced in localStorage by groupId) -----
-    ns(key) {
-        return `${this.groupId}:${key}`;
-    }
-    storageGet(key) {
-        return localStorage.getItem(this.ns(key));
-    }
-    storageSet(key, value) {
-        localStorage.setItem(this.ns(key), value);
-    }
-    storageRemove(key) {
-        localStorage.removeItem(this.ns(key));
+    // ---------- Session ID ----------
+    loadOrCreateSessionId(providedSessionId) {
+        let sid = this.lsGet(this.KEY_SESSION_ID);
+        if (!sid) {
+            sid = providedSessionId || this.generateSessionId();
+            this.lsSet(this.KEY_SESSION_ID, sid);
+        }
+        return sid;
     }
 
-    // ----- Keys -----
-    getOpenStateKey() {
-        return `chatWidgetIsOpen-${this.sessionId}`;
+    generateSessionId() {
+        return 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     }
-    getTooltipDismissedKey() {
-        return `chatWidgetTooltipDismissed-${this.sessionId}`;
-    }
+
+    // ---------- Keys (for compatibility with your earlier getters) ----------
+    getOpenStateKey() { return this.KEY_OPEN; }
+    getTooltipDismissedKey() { return this.KEY_TOOLTIP; }
 
     // ---------- Init ----------
     init() {
         this.bindEvents();
-        this.setupCrossTabSync();    // listen for other tabs in the same browser session
+        this.setupBroadcastChannel();
+        this.setupStorageSync();
         this.restoreOpenState();     // restore open/closed BEFORE tooltip logic
         this.showTooltip();
         this.startPulseAnimation();
@@ -97,44 +142,68 @@ class ChatWidget {
         });
     }
 
-    // ---------- Cross-tab sync (same browser session) ----------
-    setupCrossTabSync() {
+    // ---------- Cross-tab sync (fast channel) ----------
+    setupBroadcastChannel() {
+        if ("BroadcastChannel" in window) {
+            this.channel = new BroadcastChannel("dw-chat");
+            this.channel.onmessage = (evt) => {
+                const msg = evt.data || {};
+                if (msg.type === "openState") {
+                    if (msg.value === true && !this.isOpen) this.openChat();
+                    if (msg.value === false && this.isOpen) this.closeChat();
+                }
+                if (msg.type === "historyChanged") {
+                    this.chatRestored = false;
+                    this.restoreChatHistory();
+                }
+                if (msg.type === "tooltipDismissed") {
+                    this.hideTooltip();
+                }
+            };
+        }
+    }
+
+    postChannel(payload) {
+        if (this.channel) {
+            try { this.channel.postMessage(payload); } catch {}
+        }
+    }
+
+    // ---------- Cross-tab sync (reliable fallback) ----------
+    setupStorageSync() {
         window.addEventListener('storage', (e) => {
             if (!e.key) return;
 
-            // Only react to keys in *our* current session group
-            const prefix = `${this.groupId}:`;
-            if (!e.key.startsWith(prefix)) return;
-
-            const rawKey = e.key.slice(prefix.length);
-
-            // Sync open/closed state
-            if (rawKey === this.getOpenStateKey()) {
-                const shouldBeOpen = this.storageGet(this.getOpenStateKey()) === 'true';
+            // Open/closed state
+            if (e.key === this.KEY_OPEN) {
+                const shouldBeOpen = this.lsGet(this.KEY_OPEN) === 'true';
                 if (shouldBeOpen && !this.isOpen) this.openChat();
                 if (!shouldBeOpen && this.isOpen) this.closeChat();
                 return;
             }
 
-            // Sync messages when history changes
-            if (rawKey === `chatWidgetHistory-${this.sessionId}`) {
+            // Messages history
+            if (e.key === this.KEY_HISTORY) {
                 this.chatRestored = false;
                 this.restoreChatHistory();
                 return;
             }
 
-            // Sync tooltip dismissal
-            if (rawKey === this.getTooltipDismissedKey()) {
-                const dismissed = this.storageGet(this.getTooltipDismissedKey()) === 'true';
+            // Tooltip dismissed
+            if (e.key === this.KEY_TOOLTIP) {
+                const dismissed = this.lsGet(this.KEY_TOOLTIP) === 'true';
                 if (dismissed) this.hideTooltip();
+                return;
             }
+
+            // Tabs counter changes are informational; nothing to do here
         });
     }
 
     // ---------- Tooltip control ----------
     showTooltip() {
         setTimeout(() => {
-            const dismissed = this.storageGet(this.getTooltipDismissedKey());
+            const dismissed = this.lsGet(this.KEY_TOOLTIP);
             if (!this.isOpen && !dismissed) {
                 document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
             }
@@ -151,7 +220,8 @@ class ChatWidget {
             el.classList.remove('chat-widget__tooltip--visible');
             el.style.display = 'none';
         }
-        this.storageSet(this.getTooltipDismissedKey(), 'true');
+        this.lsSet(this.KEY_TOOLTIP, 'true');
+        this.postChannel({ type: "tooltipDismissed" });
     }
 
     startPulseAnimation() {
@@ -170,8 +240,8 @@ class ChatWidget {
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
 
-        // persist open state (shared across tabs within this browser session)
-        this.storageSet(this.getOpenStateKey(), 'true');
+        this.lsSet(this.KEY_OPEN, 'true');
+        this.postChannel({ type: "openState", value: true });
 
         this.hideTooltip();
         this.restoreChatHistory();
@@ -184,15 +254,14 @@ class ChatWidget {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
 
-        // persist closed state (shared across tabs within this browser session)
-        this.storageSet(this.getOpenStateKey(), 'false');
+        this.lsSet(this.KEY_OPEN, 'false');
+        this.postChannel({ type: "openState", value: false });
     }
 
     // restore open/closed state on load
     restoreOpenState() {
-        const wasOpen = this.storageGet(this.getOpenStateKey());
+        const wasOpen = this.lsGet(this.KEY_OPEN);
         if (wasOpen === 'true') {
-            // Defer slightly so DOM is ready if constructor runs early
             requestAnimationFrame(() => this.openChat());
         }
     }
@@ -204,9 +273,7 @@ class ChatWidget {
         if (!message) return;
 
         this.addMessage('user', message);
-        if (input) {
-            input.value = '';
-        }
+        if (input) input.value = '';
         const sendBtn = document.getElementById('chatSend');
         if (sendBtn) sendBtn.disabled = true;
 
@@ -228,7 +295,6 @@ class ChatWidget {
             const { text } = await res.json();
             this.hideTypingIndicator();
 
-            // NOTE: you currently inject <br>. If you want to avoid <br>, replace with <p> blocks instead.
             const botHTML = (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>');
             const botMessage = this.addMessage('bot', botHTML);
             this.lastBotMessage = botMessage;
@@ -336,34 +402,22 @@ class ChatWidget {
         this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 0182 359 303<br>📧 Email: hallo@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
     }
 
-    // ---------- Session ----------
-    loadOrCreateSessionId(providedSessionId) {
-        // Single id per browser-session group
-        let sessionId = this.storageGet('chatWidgetSessionId');
-        if (!sessionId) {
-            sessionId = providedSessionId || this.generateSessionId();
-            this.storageSet('chatWidgetSessionId', sessionId);
-        }
-        return sessionId;
-    }
-
-    generateSessionId() {
-        return 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    }
-
+    // ---------- Persisted chat ----------
     saveMessageToSession(message) {
-        const key = `chatWidgetHistory-${this.sessionId}`;
-        const history = JSON.parse(this.storageGet(key) || '[]');
+        const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
         history.push(message);
-        this.storageSet(key, JSON.stringify(history));
-        // setItem triggers storage events in other tabs (same session group)
+        this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
+
+        // Notify siblings
+        this.postChannel({ type: "historyChanged" });
+        // storage event will also fire in other tabs
+        this.lsSet(this.KEY_HISTORY, JSON.stringify(history)); // set again to ensure storage event triggers
     }
 
     restoreChatHistory() {
         if (this.chatRestored) return;
 
-        const key = `chatWidgetHistory-${this.sessionId}`;
-        const history = JSON.parse(this.storageGet(key) || '[]');
+        const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
 
         const messagesEl = document.getElementById('chatMessages');
         if (messagesEl) messagesEl.innerHTML = ''; // prevent duplicates
@@ -376,23 +430,21 @@ class ChatWidget {
     }
 
     clearChatHistory() {
-        this.storageRemove(`chatWidgetHistory-${this.sessionId}`);
-        this.storageRemove(`chatWidgetWelcome-${this.sessionId}`);
-        this.storageRemove(this.getTooltipDismissedKey());
-        this.storageRemove(this.getOpenStateKey());
+        this.lsRemove(this.KEY_HISTORY);
+        this.lsRemove(this.KEY_WELCOME);
+        this.lsRemove(this.KEY_TOOLTIP);
+        this.lsRemove(this.KEY_OPEN);
         this.chatRestored = false;
     }
 
     maybeAddWelcomeMessage() {
-        const welcomeKey = `chatWidgetWelcome-${this.sessionId}`;
-        const alreadyWelcomed = this.storageGet(welcomeKey);
+        const alreadyWelcomed = this.lsGet(this.KEY_WELCOME);
         if (!alreadyWelcomed) {
             this.addMessage(
                 'bot',
-                'Hallo! Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen? Stel je vraag hieronder.'
+                'Hallo! Ik ben Lotte van Draadwerk. Als AI-assistente help ik je graag verder. Hoe kan ik je vandaag helpen? Stel je vraag hieronder.'
             );
-            this.storageSet(welcomeKey, 'true');
+            this.lsSet(this.KEY_WELCOME, 'true');
         }
     }
 }
-

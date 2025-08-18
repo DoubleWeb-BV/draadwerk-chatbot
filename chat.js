@@ -1,6 +1,7 @@
 class ChatWidget {
     constructor(webhookURL, sessionId = null, userId) {
         this.webhookURL = webhookURL;
+        this.groupId = this.initGroupId();                 // ← session-scoped namespace
         this.sessionId = this.loadOrCreateSessionId(sessionId);
         this.userId = userId;
         this.isOpen = false;
@@ -9,16 +10,38 @@ class ChatWidget {
         this.init();
     }
 
-    // ----- Storage helper (shared across tabs) -----
-    get storage() {
-        return window.localStorage;
+    // ----- Session "group" that lasts only while the browser is open -----
+    initGroupId() {
+        // One id per *browser session* (sessionStorage survives across tabs but
+        // disappears when the browser (or all windows) close)
+        let gid = sessionStorage.getItem('chatWidgetGroupId');
+        if (!gid) {
+            gid = 'grp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
+            sessionStorage.setItem('chatWidgetGroupId', gid);
+        }
+        // Optional: publish current group for debugging/inspection
+        localStorage.setItem('chatWidgetCurrentGroupId', gid);
+        return gid;
+    }
+
+    // ----- Storage helpers (namespaced in localStorage by groupId) -----
+    ns(key) {
+        return `${this.groupId}:${key}`;
+    }
+    storageGet(key) {
+        return localStorage.getItem(this.ns(key));
+    }
+    storageSet(key, value) {
+        localStorage.setItem(this.ns(key), value);
+    }
+    storageRemove(key) {
+        localStorage.removeItem(this.ns(key));
     }
 
     // ----- Keys -----
     getOpenStateKey() {
         return `chatWidgetIsOpen-${this.sessionId}`;
     }
-
     getTooltipDismissedKey() {
         return `chatWidgetTooltipDismissed-${this.sessionId}`;
     }
@@ -26,7 +49,7 @@ class ChatWidget {
     // ---------- Init ----------
     init() {
         this.bindEvents();
-        this.setupCrossTabSync();    // listen for other tabs
+        this.setupCrossTabSync();    // listen for other tabs in the same browser session
         this.restoreOpenState();     // restore open/closed BEFORE tooltip logic
         this.showTooltip();
         this.startPulseAnimation();
@@ -74,29 +97,35 @@ class ChatWidget {
         });
     }
 
-    // ---------- Cross-tab sync ----------
+    // ---------- Cross-tab sync (same browser session) ----------
     setupCrossTabSync() {
         window.addEventListener('storage', (e) => {
             if (!e.key) return;
 
+            // Only react to keys in *our* current session group
+            const prefix = `${this.groupId}:`;
+            if (!e.key.startsWith(prefix)) return;
+
+            const rawKey = e.key.slice(prefix.length);
+
             // Sync open/closed state
-            if (e.key === this.getOpenStateKey()) {
-                const shouldBeOpen = this.storage.getItem(this.getOpenStateKey()) === 'true';
+            if (rawKey === this.getOpenStateKey()) {
+                const shouldBeOpen = this.storageGet(this.getOpenStateKey()) === 'true';
                 if (shouldBeOpen && !this.isOpen) this.openChat();
                 if (!shouldBeOpen && this.isOpen) this.closeChat();
                 return;
             }
 
             // Sync messages when history changes
-            if (e.key === `chatWidgetHistory-${this.sessionId}`) {
+            if (rawKey === `chatWidgetHistory-${this.sessionId}`) {
                 this.chatRestored = false;
                 this.restoreChatHistory();
                 return;
             }
 
             // Sync tooltip dismissal
-            if (e.key === this.getTooltipDismissedKey()) {
-                const dismissed = this.storage.getItem(this.getTooltipDismissedKey()) === 'true';
+            if (rawKey === this.getTooltipDismissedKey()) {
+                const dismissed = this.storageGet(this.getTooltipDismissedKey()) === 'true';
                 if (dismissed) this.hideTooltip();
             }
         });
@@ -105,7 +134,7 @@ class ChatWidget {
     // ---------- Tooltip control ----------
     showTooltip() {
         setTimeout(() => {
-            const dismissed = this.storage.getItem(this.getTooltipDismissedKey());
+            const dismissed = this.storageGet(this.getTooltipDismissedKey());
             if (!this.isOpen && !dismissed) {
                 document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
             }
@@ -122,7 +151,7 @@ class ChatWidget {
             el.classList.remove('chat-widget__tooltip--visible');
             el.style.display = 'none';
         }
-        this.storage.setItem(this.getTooltipDismissedKey(), 'true');
+        this.storageSet(this.getTooltipDismissedKey(), 'true');
     }
 
     startPulseAnimation() {
@@ -141,8 +170,8 @@ class ChatWidget {
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
 
-        // persist open state (shared across tabs)
-        this.storage.setItem(this.getOpenStateKey(), 'true');
+        // persist open state (shared across tabs within this browser session)
+        this.storageSet(this.getOpenStateKey(), 'true');
 
         this.hideTooltip();
         this.restoreChatHistory();
@@ -155,13 +184,13 @@ class ChatWidget {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
 
-        // persist closed state (shared across tabs)
-        this.storage.setItem(this.getOpenStateKey(), 'false');
+        // persist closed state (shared across tabs within this browser session)
+        this.storageSet(this.getOpenStateKey(), 'false');
     }
 
     // restore open/closed state on load
     restoreOpenState() {
-        const wasOpen = this.storage.getItem(this.getOpenStateKey());
+        const wasOpen = this.storageGet(this.getOpenStateKey());
         if (wasOpen === 'true') {
             // Defer slightly so DOM is ready if constructor runs early
             requestAnimationFrame(() => this.openChat());
@@ -309,11 +338,11 @@ class ChatWidget {
 
     // ---------- Session ----------
     loadOrCreateSessionId(providedSessionId) {
-        // Single id across tabs for this origin
-        let sessionId = this.storage.getItem('chatWidgetSessionId');
+        // Single id per browser-session group
+        let sessionId = this.storageGet('chatWidgetSessionId');
         if (!sessionId) {
             sessionId = providedSessionId || this.generateSessionId();
-            this.storage.setItem('chatWidgetSessionId', sessionId);
+            this.storageSet('chatWidgetSessionId', sessionId);
         }
         return sessionId;
     }
@@ -324,18 +353,17 @@ class ChatWidget {
 
     saveMessageToSession(message) {
         const key = `chatWidgetHistory-${this.sessionId}`;
-        const history = JSON.parse(this.storage.getItem(key) || '[]');
+        const history = JSON.parse(this.storageGet(key) || '[]');
         history.push(message);
-        this.storage.setItem(key, JSON.stringify(history));
-        // trigger cross-tab sync via storage event
-        // (setItem already triggers it in other tabs)
+        this.storageSet(key, JSON.stringify(history));
+        // setItem triggers storage events in other tabs (same session group)
     }
 
     restoreChatHistory() {
         if (this.chatRestored) return;
 
         const key = `chatWidgetHistory-${this.sessionId}`;
-        const history = JSON.parse(this.storage.getItem(key) || '[]');
+        const history = JSON.parse(this.storageGet(key) || '[]');
 
         const messagesEl = document.getElementById('chatMessages');
         if (messagesEl) messagesEl.innerHTML = ''; // prevent duplicates
@@ -348,22 +376,22 @@ class ChatWidget {
     }
 
     clearChatHistory() {
-        this.storage.removeItem(`chatWidgetHistory-${this.sessionId}`);
-        this.storage.removeItem(`chatWidgetWelcome-${this.sessionId}`);
-        this.storage.removeItem(this.getTooltipDismissedKey());
-        this.storage.removeItem(this.getOpenStateKey());
+        this.storageRemove(`chatWidgetHistory-${this.sessionId}`);
+        this.storageRemove(`chatWidgetWelcome-${this.sessionId}`);
+        this.storageRemove(this.getTooltipDismissedKey());
+        this.storageRemove(this.getOpenStateKey());
         this.chatRestored = false;
     }
 
     maybeAddWelcomeMessage() {
         const welcomeKey = `chatWidgetWelcome-${this.sessionId}`;
-        const alreadyWelcomed = this.storage.getItem(welcomeKey);
+        const alreadyWelcomed = this.storageGet(welcomeKey);
         if (!alreadyWelcomed) {
             this.addMessage(
                 'bot',
                 'Hallo! Ik ben Michael van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen? Stel je vraag hieronder.'
             );
-            this.storage.setItem(welcomeKey, 'true');
+            this.storageSet(welcomeKey, 'true');
         }
     }
 }

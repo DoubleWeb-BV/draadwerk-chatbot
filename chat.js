@@ -1,6 +1,6 @@
 class ChatWidget {
     constructor(webhookURL, sessionId = null, userId) {
-        this.webhookURL = webhookURL;
+        this.webhookURL = webhookURL; // message/feedback webhook
         this.userId = userId;
 
         // ----- Constants / keys
@@ -11,34 +11,35 @@ class ChatWidget {
         this.KEY_OPEN       = null; // depends on sessionId
         this.KEY_TOOLTIP    = null; // depends on sessionId
 
-        // New: tab fingerprint + last-seen heartbeat
-        this.SS_TAB_ID      = this.LS_PREFIX + "tabId";         // sessionStorage
-        this.KEY_LAST_SEEN  = this.LS_PREFIX + "lastSeen";      // localStorage
-        this.RESET_MS       = 4000; // treat as "fresh browser start" if lastSeen is older than this AND no tabId
+        // Tab fingerprint + last-seen
+        this.SS_TAB_ID      = this.LS_PREFIX + "tabId";
+        this.KEY_LAST_SEEN  = this.LS_PREFIX + "lastSeen";
+        this.RESET_MS       = 4000;
 
         // State
         this.isOpen = false;
         this.lastBotMessage = null;
         this.chatRestored = false;
-        this.chatConfig = null; // filled by preloadChatData()
+        this.chatConfig = null;
+        this.configLoaded = false;
+        this.configReady = null;
+
         this.texts = {
             success: "Dank je! Fijn dat ik je kon helpen. 😊",
             notUseful: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
             cta: "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0000 - 000 000 <br>📧 E-mail: info@example.com",
         };
 
-        // ----- Neutrale defaults als fallback -----
+        // Neutral fallbacks
         this.DEFAULTS = {
             avatar_url: "profile.png",
             chatbot_name: "AI Assistent",
             name_subtitle: "Virtuele assistent",
             tooltip: "Kan ik je helpen?",
-            opening_message:
-                "Hallo! 👋 Ik ben je AI-assistent. Hoe kan ik je vandaag helpen?",
+            opening_message: "Hallo! 👋 Ik ben je AI-assistent. Hoe kan ik je vandaag helpen?",
             placeholder_message: "Typ je bericht...",
             cta_button_text: "Contact opnemen",
-            cta_text:
-                "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0000 - 000 000 <br>📧 E-mail: info@example.com",
+            cta_text: "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0000 - 000 000 <br>📧 E-mail: info@example.com",
             success_text: "Dank je! Fijn dat ik je kon helpen. 😊",
             not_useful_text: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
             primary_color: "#022d1f",
@@ -73,7 +74,24 @@ class ChatWidget {
     lsRemove(key) { localStorage.removeItem(key); }
     ssGet(key) { return sessionStorage.getItem(key); }
     ssSet(key, val) { sessionStorage.setItem(key, val); }
-    ssRemove(key) { sessionStorage.removeItem(key); }
+
+    // ---------- Hide/Reveal ----------
+    ensureHidden() {
+        const root = document.getElementById('chat-widget');
+        if (root) {
+            root.setAttribute('data-ready', '0');
+            root.style.visibility = 'hidden';
+            root.style.opacity = '0';
+        }
+    }
+    revealWidget() {
+        const root = document.getElementById('chat-widget');
+        if (root) {
+            root.setAttribute('data-ready', '1');
+            root.style.visibility = 'visible';
+            root.style.opacity = '1';
+        }
+    }
 
     // ---------- Tab fingerprint & browser-new detection ----------
     adoptOrCreateTabId() {
@@ -110,11 +128,9 @@ class ChatWidget {
         document.addEventListener('visibilitychange', () => {
             this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
         });
-
         window.addEventListener('pagehide', () => {
             this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
         });
-
         this._heartbeat = setInterval(() => {
             if (!document.hidden) {
                 this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
@@ -131,23 +147,25 @@ class ChatWidget {
         }
         return sid;
     }
-
     generateSessionId() {
         return 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     }
 
-    // ---------- Keys (compat) ----------
-    getOpenStateKey() { return this.KEY_OPEN; }
-    getTooltipDismissedKey() { return this.KEY_TOOLTIP; }
-
     // ---------- Init ----------
     init() {
+        this.ensureHidden(); // keep hidden until config is ready
+
         this.bindEvents();
         this.setupBroadcastChannel();
         this.setupStorageSync();
-        this.restoreOpenState();     // restore open/closed BEFORE tooltip logic
-        this.showTooltip();
-        this.startPulseAnimation();
+
+        // Load remote config and only then show UI/tooltip/restore state
+        this.configReady = this.preloadChatData().catch(() => {});
+        this.configReady.finally(() => {
+            this.restoreOpenState();
+            this.showTooltip();
+            this.startPulseAnimation();
+        });
     }
 
     // ---------- Events ----------
@@ -174,19 +192,18 @@ class ChatWidget {
                 this.sendMessage();
             }
         });
-
         chatInput?.addEventListener('input', (e) => {
             if (chatSend) chatSend.disabled = e.target.value.trim().length === 0;
         });
 
-        chatTooltip?.addEventListener('click', () => {
-            this.openChat();
+        chatTooltip?.addEventListener('click', async () => {
+            await this.toggleChat();
             this.dismissTooltip();
         });
-        chatTooltip?.addEventListener('keydown', (e) => {
+        chatTooltip?.addEventListener('keydown', async (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                this.openChat();
+                await this.toggleChat();
                 this.dismissTooltip();
             }
         });
@@ -196,7 +213,7 @@ class ChatWidget {
         );
     }
 
-    // ---------- Cross-tab sync (fast channel) ----------
+    // ---------- Cross-tab sync ----------
     setupBroadcastChannel() {
         if ("BroadcastChannel" in window) {
             this.channel = new BroadcastChannel("dw-chat");
@@ -216,31 +233,27 @@ class ChatWidget {
             };
         }
     }
-
     postChannel(payload) {
         if (this.channel) {
             try { this.channel.postMessage(payload); } catch {}
         }
     }
 
-    // ---------- Cross-tab sync (reliable fallback) ----------
     setupStorageSync() {
-        window.addEventListener('storage', (e) => {
+        window.addEventListener('storage', async (e) => {
             if (!e.key) return;
 
             if (e.key === this.KEY_OPEN) {
                 const shouldBeOpen = this.lsGet(this.KEY_OPEN) === 'true';
-                if (shouldBeOpen && !this.isOpen) this.openChat();
+                if (shouldBeOpen && !this.isOpen) await this.openChat();
                 if (!shouldBeOpen && this.isOpen) this.closeChat();
                 return;
             }
-
             if (e.key === this.KEY_HISTORY) {
                 this.chatRestored = false;
                 this.restoreChatHistory();
                 return;
             }
-
             if (e.key === this.KEY_TOOLTIP) {
                 const dismissed = this.lsGet(this.KEY_TOOLTIP) === 'true';
                 if (dismissed) this.hideTooltip();
@@ -249,20 +262,19 @@ class ChatWidget {
         });
     }
 
-    // ---------- Tooltip control ----------
+    // ---------- Tooltip ----------
     showTooltip() {
         setTimeout(() => {
+            if (!this.configLoaded) return;
             const dismissed = this.lsGet(this.KEY_TOOLTIP);
             if (!this.isOpen && !dismissed) {
                 document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
             }
         }, 5000);
     }
-
     hideTooltip() {
         document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible');
     }
-
     dismissTooltip() {
         const el = document.getElementById('chatTooltip');
         if (el) {
@@ -272,21 +284,20 @@ class ChatWidget {
         this.lsSet(this.KEY_TOOLTIP, 'true');
         this.postChannel({ type: "tooltipDismissed" });
     }
-
     startPulseAnimation() {
         setTimeout(() => {
             document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse');
         }, 10000);
     }
 
-    // ---------- Theme (CSS-variabelen) ----------
+    // ---------- Theme (CSS vars) ----------
     applyTheme(primary, secondary) {
         const root = document.querySelector('#chat-widget') || document.documentElement;
         root.style.setProperty('--primary-color', primary || this.DEFAULTS.primary_color);
         root.style.setProperty('--secondary-color', secondary || this.DEFAULTS.secondary_color);
     }
 
-    // ---------- Normalization helper for remote data ----------
+    // ---------- Helpers ----------
     _normalize(value, fallback) {
         if (Array.isArray(value)) value = value[0];
         if (typeof value !== "string") return fallback;
@@ -294,7 +305,7 @@ class ChatWidget {
         return trimmed.length ? trimmed : fallback;
     }
 
-    // ---------- Apply remote config (with fallbacks) ----------
+    // ---------- Apply remote config ----------
     applyRemoteConfig(raw) {
         const cfg = {
             avatar_url: this._normalize(raw?.avatar_url, this.DEFAULTS.avatar_url),
@@ -311,17 +322,14 @@ class ChatWidget {
             secondary_color: this._normalize(raw?.secondary_color, this.DEFAULTS.secondary_color),
         };
 
-        // Store texts for later usage
         this.texts = {
             success: cfg.success_text,
             notUseful: cfg.not_useful_text,
             cta: cfg.cta_text,
         };
-
-        // Save whole config
         this.chatConfig = cfg;
 
-        // Apply theme colors
+        // Apply colors
         this.applyTheme(cfg.primary_color, cfg.secondary_color);
 
         const $ = (sel) => document.querySelector(sel);
@@ -332,21 +340,21 @@ class ChatWidget {
         if (avatar1) avatar1.src = cfg.avatar_url;
         if (avatar2) avatar2.src = cfg.avatar_url;
 
-        // Header name and subtitle (keep Online • )
+        // Header
         const headerTitle = $(".chat-widget__header-title");
         if (headerTitle) headerTitle.textContent = cfg.chatbot_name;
 
         const headerSubtitle = $(".chat-widget__header-subtitle");
         if (headerSubtitle) headerSubtitle.textContent = `Online • ${cfg.name_subtitle}`;
 
-        // Tooltip
+        // Tooltip text
         const tooltipEl = $("#chatTooltip");
         if (tooltipEl) {
             tooltipEl.textContent = cfg.tooltip;
             tooltipEl.setAttribute("aria-label", "Open chat");
         }
 
-        // CTA button label
+        // CTA label
         const contactBtn = $("#contactBtn");
         if (contactBtn) contactBtn.textContent = cfg.cta_button_text;
 
@@ -354,10 +362,13 @@ class ChatWidget {
         const input = $("#chatInput");
         if (input) input.setAttribute("placeholder", cfg.placeholder_message);
 
-        // Initial welcome (only if not welcomed and no history)
+        // Mark loaded and reveal
+        this.configLoaded = true;
+        this.revealWidget();
+
+        // Initial welcome (only once and only if no history)
         const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
         const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
-
         if (!alreadyWelcomed && !hasHistory && cfg.opening_message) {
             const html = cfg.opening_message.replace(/\n/g, "<br>");
             this.addMessage("bot", html);
@@ -376,29 +387,36 @@ class ChatWidget {
                     sessionId: this.sessionId || null
                 })
             });
-
             if (!res.ok) throw new Error(`Webhook error: ${res.status}`);
 
             const data = await res.json();
             this.applyRemoteConfig(data);
-        } catch (err) {
-            // Fallback: zet theme op defaults en toon neutrale welcome als nog niet gedaan
+        } catch (_err) {
+            // Fallback: apply defaults and reveal
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
+            this.configLoaded = true;
+            this.revealWidget();
+
             const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
             const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
             if (!alreadyWelcomed && !hasHistory) {
                 this.addMessage("bot", this.DEFAULTS.opening_message);
-                this.lsSet(this.KEY_WELCOME, "true");
+                this.lsSet(this.KEY_WELCOME, 'true');
             }
         }
     }
 
     // ---------- Open / Close ----------
-    toggleChat() {
-        this.isOpen ? this.closeChat() : this.openChat();
+    async toggleChat() {
+        return this.isOpen ? this.closeChat() : this.openChat();
     }
 
     async openChat() {
+        // Wait until config is ready (no flash of default texts)
+        if (!this.configLoaded && this.configReady) {
+            await this.configReady;
+        }
+
         const container = document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
@@ -408,13 +426,6 @@ class ChatWidget {
 
         this.hideTooltip();
         this.restoreChatHistory();
-
-        // Fetch dynamic data from n8n before default welcome (only once per session)
-        if (!this.chatConfig) {
-            await this.preloadChatData();
-        }
-
-        this.maybeAddWelcomeMessage();
 
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
     }
@@ -427,11 +438,15 @@ class ChatWidget {
         this.postChannel({ type: "openState", value: false });
     }
 
-    // restore open/closed state on load
+    // restore open state after config load
     restoreOpenState() {
         const wasOpen = this.lsGet(this.KEY_OPEN);
         if (wasOpen === 'true') {
-            requestAnimationFrame(() => this.openChat());
+            if (this.configReady) {
+                this.configReady.then(() => this.openChat());
+            } else {
+                this.openChat();
+            }
         }
     }
 
@@ -467,7 +482,7 @@ class ChatWidget {
             const botHTML = (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>');
             const botMessage = this.addMessage('bot', botHTML);
             this.lastBotMessage = botMessage;
-        } catch (err) {
+        } catch (_err) {
             this.hideTypingIndicator();
             const botMessage = this.addMessage('bot', 'Er ging iets mis.');
             this.lastBotMessage = botMessage;
@@ -480,11 +495,7 @@ class ChatWidget {
 
         const timestamp = new Date();
         const formattedTime = timestamp.toLocaleString('nl-NL', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
+            day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
         });
 
         msg.innerHTML = `
@@ -569,16 +580,14 @@ class ChatWidget {
         this.addMessage('bot', html);
     }
 
-    // ---------- Persisted chat ----------
+    // ---------- Persistence ----------
     saveMessageToSession(message) {
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
         history.push(message);
         this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
 
-        // Notify siblings
         this.postChannel({ type: "historyChanged" });
-        // storage event will also fire in other tabs
-        this.lsSet(this.KEY_HISTORY, JSON.stringify(history)); // set again to ensure storage event triggers
+        this.lsSet(this.KEY_HISTORY, JSON.stringify(history)); // ensure storage event triggers
     }
 
     restoreChatHistory() {
@@ -587,7 +596,7 @@ class ChatWidget {
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
 
         const messagesEl = document.getElementById('chatMessages');
-        if (messagesEl) messagesEl.innerHTML = ''; // prevent duplicates
+        if (messagesEl) messagesEl.innerHTML = '';
 
         history.forEach(entry => {
             this.addMessage(entry.type, entry.htmlText, true);
@@ -604,6 +613,7 @@ class ChatWidget {
         this.chatRestored = false;
     }
 
+    // Kept for compatibility (not used if welcome already added on config load)
     maybeAddWelcomeMessage() {
         const alreadyWelcomed = this.lsGet(this.KEY_WELCOME);
         if (!alreadyWelcomed) {

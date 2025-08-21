@@ -9,6 +9,7 @@
     right: 30px;
     z-index: 10000;
     font-family: inherit;
+    line-height: 1;
 }
 
 #chat-widget .chat-widget__message-text {

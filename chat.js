@@ -23,6 +23,7 @@ class ChatWidget {
         this.isOpen = false;
         this.lastBotMessage = null;
         this.chatRestored = false;
+        this.chatConfig = null; // filled by preloadChatData()
 
         // Cross-tab channel
         this.channel = null;
@@ -276,12 +277,45 @@ class ChatWidget {
         }, 10000);
     }
 
+    // ---------- Preload from n8n (POST) ----------
+    async preloadChatData() {
+        try {
+            const res = await fetch("https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    userId: this.userId || null,
+                    sessionId: this.sessionId || null
+                })
+            });
+
+            if (!res.ok) throw new Error(`Webhook error: ${res.status}`);
+
+            const data = await res.json();
+
+            // 🔎 Debug log
+            console.log("Preload chat data from n8n:", data);
+
+            // Store full config
+            this.chatConfig = data;
+
+            // If backend provides a welcome message, add it (only once)
+            const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === 'true';
+            if (data && typeof data.welcome === 'string' && data.welcome.trim().length > 0 && !alreadyWelcomed) {
+                this.lsSet(this.KEY_WELCOME, 'true');
+                this.addMessage('bot', data.welcome);
+            }
+        } catch (err) {
+            console.error("Failed to preload chat data:", err);
+        }
+    }
+
     // ---------- Open / Close ----------
     toggleChat() {
         this.isOpen ? this.closeChat() : this.openChat();
     }
 
-    openChat() {
+    async openChat() {
         const container = document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
@@ -291,6 +325,12 @@ class ChatWidget {
 
         this.hideTooltip();
         this.restoreChatHistory();
+
+        // 🔑 Fetch dynamic data from n8n before showing default welcome (only first open / per session)
+        if (!this.chatConfig) {
+            await this.preloadChatData();
+        }
+
         this.maybeAddWelcomeMessage();
 
         setTimeout(() => document.getElementById('chatInput')?.focus(), 300);

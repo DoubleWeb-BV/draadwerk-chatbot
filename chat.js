@@ -16,9 +16,6 @@ class ChatWidget {
         this.KEY_LAST_SEEN  = this.LS_PREFIX + "lastSeen";      // localStorage
         this.RESET_MS       = 4000; // treat as "fresh browser start" if lastSeen is older than this AND no tabId
 
-        // (Optional) keep for broadcast/history sync; no longer used for destructive cleanup
-        this.KEY_TABS       = this.LS_PREFIX + "openTabs";
-
         // State
         this.isOpen = false;
         this.lastBotMessage = null;
@@ -27,21 +24,21 @@ class ChatWidget {
         this.texts = {
             success: "Dank je! Fijn dat ik je kon helpen. 😊",
             notUseful: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
-            cta: "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0182 - 35 93 03 <br>📧 E-mail: hallo@draadwerk.nl",
+            cta: "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0000 - 000 000 <br>📧 E-mail: info@example.com",
         };
 
-        // Defaults used as fallback for remote config
+        // ----- Neutrale defaults als fallback -----
         this.DEFAULTS = {
             avatar_url: "profile.png",
-            chatbot_name: "Lotte van Draadwerk",
-            name_subtitle: "AI Assistent",
+            chatbot_name: "AI Assistent",
+            name_subtitle: "Virtuele assistent",
             tooltip: "Kan ik je helpen?",
             opening_message:
-                "Hallo! Ik ben Lotte van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?",
+                "Hallo! 👋 Ik ben je AI-assistent. Hoe kan ik je vandaag helpen?",
             placeholder_message: "Typ je bericht...",
-            cta_button_text: "Direct contact",
+            cta_button_text: "Contact opnemen",
             cta_text:
-                "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0182 - 35 93 03 <br>📧 E-mail: hallo@draadwerk.nl",
+                "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0000 - 000 000 <br>📧 E-mail: info@example.com",
             success_text: "Dank je! Fijn dat ik je kon helpen. 😊",
             not_useful_text: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
             primary_color: "#022d1f",
@@ -51,13 +48,13 @@ class ChatWidget {
         // Cross-tab channel
         this.channel = null;
 
-        // STEP 1: Create/adopt per-tab fingerprint BEFORE anything else
+        // STEP 1: tab fingerprint
         this.adoptOrCreateTabId();
 
-        // STEP 2: Fresh-start detection (runs only when there is NO tabId — i.e., truly new tab/window)
+        // STEP 2: fresh-start detection
         this.maybeResetForNewBrowser();
 
-        // STEP 3: Create/adopt shared sessionId (per whole-site session)
+        // STEP 3: shared sessionId
         this.sessionId = this.loadOrCreateSessionId(sessionId);
 
         // Per-session keys
@@ -282,6 +279,13 @@ class ChatWidget {
         }, 10000);
     }
 
+    // ---------- Theme (CSS-variabelen) ----------
+    applyTheme(primary, secondary) {
+        const root = document.querySelector('#chat-widget') || document.documentElement;
+        root.style.setProperty('--primary-color', primary || this.DEFAULTS.primary_color);
+        root.style.setProperty('--secondary-color', secondary || this.DEFAULTS.secondary_color);
+    }
+
     // ---------- Normalization helper for remote data ----------
     _normalize(value, fallback) {
         if (Array.isArray(value)) value = value[0];
@@ -317,6 +321,9 @@ class ChatWidget {
         // Save whole config
         this.chatConfig = cfg;
 
+        // Apply theme colors
+        this.applyTheme(cfg.primary_color, cfg.secondary_color);
+
         const $ = (sel) => document.querySelector(sel);
 
         // Avatars
@@ -347,11 +354,6 @@ class ChatWidget {
         const input = $("#chatInput");
         if (input) input.setAttribute("placeholder", cfg.placeholder_message);
 
-        // Colors via CSS vars
-        const root = $("#chat-widget") || document.documentElement;
-        root.style.setProperty("--dw-primary", cfg.primary_color);
-        root.style.setProperty("--dw-secondary", cfg.secondary_color);
-
         // Initial welcome (only if not welcomed and no history)
         const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
         const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
@@ -380,7 +382,8 @@ class ChatWidget {
             const data = await res.json();
             this.applyRemoteConfig(data);
         } catch (err) {
-            // Fallback welcome if webhook fails and nothing shown yet
+            // Fallback: zet theme op defaults en toon neutrale welcome als nog niet gedaan
+            this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
             const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
             const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
             if (!alreadyWelcomed && !hasHistory) {
@@ -604,10 +607,7 @@ class ChatWidget {
     maybeAddWelcomeMessage() {
         const alreadyWelcomed = this.lsGet(this.KEY_WELCOME);
         if (!alreadyWelcomed) {
-            this.addMessage(
-                'bot',
-                this.DEFAULTS.opening_message
-            );
+            this.addMessage('bot', this.DEFAULTS.opening_message);
             this.lsSet(this.KEY_WELCOME, 'true');
         }
     }

@@ -24,6 +24,29 @@ class ChatWidget {
         this.lastBotMessage = null;
         this.chatRestored = false;
         this.chatConfig = null; // filled by preloadChatData()
+        this.texts = {
+            success: "Dank je! Fijn dat ik je kon helpen. 😊",
+            notUseful: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
+            cta: "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0182 - 35 93 03 <br>📧 E-mail: hallo@draadwerk.nl",
+        };
+
+        // Defaults used as fallback for remote config
+        this.DEFAULTS = {
+            avatar_url: "profile.png",
+            chatbot_name: "Lotte van Draadwerk",
+            name_subtitle: "AI Assistent",
+            tooltip: "Kan ik je helpen?",
+            opening_message:
+                "Hallo! Ik ben Lotte van Draadwerk. Als AI-assistent help ik je graag verder. Hoe kan ik je vandaag helpen?",
+            placeholder_message: "Typ je bericht...",
+            cta_button_text: "Direct contact",
+            cta_text:
+                "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0182 - 35 93 03 <br>📧 E-mail: hallo@draadwerk.nl",
+            success_text: "Dank je! Fijn dat ik je kon helpen. 😊",
+            not_useful_text: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
+            primary_color: "#022d1f",
+            secondary_color: "#ff7b61",
+        };
 
         // Cross-tab channel
         this.channel = null;
@@ -57,12 +80,10 @@ class ChatWidget {
 
     // ---------- Tab fingerprint & browser-new detection ----------
     adoptOrCreateTabId() {
-        // If a tabId already exists in sessionStorage, this is the SAME TAB (navigating/reloading).
         let tabId = this.ssGet(this.SS_TAB_ID);
         if (!tabId) {
             tabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
             this.ssSet(this.SS_TAB_ID, tabId);
-            // Mark this as a brand-new tab load (used in maybeResetForNewBrowser)
             this._isBrandNewTab = true;
         } else {
             this._isBrandNewTab = false;
@@ -70,13 +91,10 @@ class ChatWidget {
     }
 
     maybeResetForNewBrowser() {
-        // If we are a brand-new tab/window (no sessionStorage previously),
-        // and the site hasn't been "seen" for longer than RESET_MS, treat as fresh browser start.
         const lastSeen = parseInt(this.lsGet(this.KEY_LAST_SEEN) || "0", 10);
         const now = Date.now();
 
         if (this._isBrandNewTab && (now - lastSeen) > this.RESET_MS) {
-            // Truly new session: wipe chat state (but NOT immediately removing our fresh tabId)
             const sid = this.lsGet(this.KEY_SESSION_ID);
             if (sid) {
                 this.lsRemove(`${this.LS_PREFIX}history:${sid}`);
@@ -85,28 +103,21 @@ class ChatWidget {
                 this.lsRemove(`${this.LS_PREFIX}tooltipDismissed:${sid}`);
             }
             this.lsRemove(this.KEY_SESSION_ID);
-            // keep KEY_TABS untouched (no longer used for destructive logic)
         }
 
-        // Update lastSeen right away on load
         this.lsSet(this.KEY_LAST_SEEN, String(now));
-
-        // Keep lastSeen fresh while page is alive (covers idle tabs)
         this.installHeartbeat();
     }
 
     installHeartbeat() {
-        // Update on visibility changes
         document.addEventListener('visibilitychange', () => {
             this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
         });
 
-        // Update on pagehide/unload transitions
         window.addEventListener('pagehide', () => {
             this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
         });
 
-        // Light heartbeat every 2s while visible
         this._heartbeat = setInterval(() => {
             if (!document.hidden) {
                 this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
@@ -183,7 +194,6 @@ class ChatWidget {
             }
         });
 
-        // Keep lastSeen fresh on user activity too
         ['click','keydown','scroll','pointerdown'].forEach(evt =>
             window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN, String(Date.now())), { passive: true })
         );
@@ -221,7 +231,6 @@ class ChatWidget {
         window.addEventListener('storage', (e) => {
             if (!e.key) return;
 
-            // Open/closed state
             if (e.key === this.KEY_OPEN) {
                 const shouldBeOpen = this.lsGet(this.KEY_OPEN) === 'true';
                 if (shouldBeOpen && !this.isOpen) this.openChat();
@@ -229,21 +238,17 @@ class ChatWidget {
                 return;
             }
 
-            // Messages history
             if (e.key === this.KEY_HISTORY) {
                 this.chatRestored = false;
                 this.restoreChatHistory();
                 return;
             }
 
-            // Tooltip dismissed
             if (e.key === this.KEY_TOOLTIP) {
                 const dismissed = this.lsGet(this.KEY_TOOLTIP) === 'true';
                 if (dismissed) this.hideTooltip();
                 return;
             }
-
-            // lastSeen changes are informational; nothing to do
         });
     }
 
@@ -277,6 +282,87 @@ class ChatWidget {
         }, 10000);
     }
 
+    // ---------- Normalization helper for remote data ----------
+    _normalize(value, fallback) {
+        if (Array.isArray(value)) value = value[0];
+        if (typeof value !== "string") return fallback;
+        const trimmed = value.trim();
+        return trimmed.length ? trimmed : fallback;
+    }
+
+    // ---------- Apply remote config (with fallbacks) ----------
+    applyRemoteConfig(raw) {
+        const cfg = {
+            avatar_url: this._normalize(raw?.avatar_url, this.DEFAULTS.avatar_url),
+            chatbot_name: this._normalize(raw?.chatbot_name, this.DEFAULTS.chatbot_name),
+            name_subtitle: this._normalize(raw?.name_subtitle, this.DEFAULTS.name_subtitle),
+            tooltip: this._normalize(raw?.tooltip, this.DEFAULTS.tooltip),
+            opening_message: this._normalize(raw?.opening_message, this.DEFAULTS.opening_message),
+            placeholder_message: this._normalize(raw?.placeholder_message, this.DEFAULTS.placeholder_message),
+            cta_button_text: this._normalize(raw?.cta_button_text, this.DEFAULTS.cta_button_text),
+            cta_text: this._normalize(raw?.cta_text, this.DEFAULTS.cta_text),
+            success_text: this._normalize(raw?.success_text, this.DEFAULTS.success_text),
+            not_useful_text: this._normalize(raw?.not_useful_text, this.DEFAULTS.not_useful_text),
+            primary_color: this._normalize(raw?.primary_color, this.DEFAULTS.primary_color),
+            secondary_color: this._normalize(raw?.secondary_color, this.DEFAULTS.secondary_color),
+        };
+
+        // Store texts for later usage
+        this.texts = {
+            success: cfg.success_text,
+            notUseful: cfg.not_useful_text,
+            cta: cfg.cta_text,
+        };
+
+        // Save whole config
+        this.chatConfig = cfg;
+
+        const $ = (sel) => document.querySelector(sel);
+
+        // Avatars
+        const avatar1 = $("#js-profile-image");
+        const avatar2 = $("#js-profile-image-2");
+        if (avatar1) avatar1.src = cfg.avatar_url;
+        if (avatar2) avatar2.src = cfg.avatar_url;
+
+        // Header name and subtitle (keep Online • )
+        const headerTitle = $(".chat-widget__header-title");
+        if (headerTitle) headerTitle.textContent = cfg.chatbot_name;
+
+        const headerSubtitle = $(".chat-widget__header-subtitle");
+        if (headerSubtitle) headerSubtitle.textContent = `Online • ${cfg.name_subtitle}`;
+
+        // Tooltip
+        const tooltipEl = $("#chatTooltip");
+        if (tooltipEl) {
+            tooltipEl.textContent = cfg.tooltip;
+            tooltipEl.setAttribute("aria-label", "Open chat");
+        }
+
+        // CTA button label
+        const contactBtn = $("#contactBtn");
+        if (contactBtn) contactBtn.textContent = cfg.cta_button_text;
+
+        // Placeholder
+        const input = $("#chatInput");
+        if (input) input.setAttribute("placeholder", cfg.placeholder_message);
+
+        // Colors via CSS vars
+        const root = $("#chat-widget") || document.documentElement;
+        root.style.setProperty("--dw-primary", cfg.primary_color);
+        root.style.setProperty("--dw-secondary", cfg.secondary_color);
+
+        // Initial welcome (only if not welcomed and no history)
+        const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
+        const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
+
+        if (!alreadyWelcomed && !hasHistory && cfg.opening_message) {
+            const html = cfg.opening_message.replace(/\n/g, "<br>");
+            this.addMessage("bot", html);
+            this.lsSet(this.KEY_WELCOME, "true");
+        }
+    }
+
     // ---------- Preload from n8n (POST) ----------
     async preloadChatData() {
         try {
@@ -292,21 +378,15 @@ class ChatWidget {
             if (!res.ok) throw new Error(`Webhook error: ${res.status}`);
 
             const data = await res.json();
-
-            // 🔎 Debug log
-            console.log("Preload chat data from n8n:", data);
-
-            // Store full config
-            this.chatConfig = data;
-
-            // If backend provides a welcome message, add it (only once)
-            const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === 'true';
-            if (data && typeof data.welcome === 'string' && data.welcome.trim().length > 0 && !alreadyWelcomed) {
-                this.lsSet(this.KEY_WELCOME, 'true');
-                this.addMessage('bot', data.welcome);
-            }
+            this.applyRemoteConfig(data);
         } catch (err) {
-            console.error("Failed to preload chat data:", err);
+            // Fallback welcome if webhook fails and nothing shown yet
+            const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
+            const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
+            if (!alreadyWelcomed && !hasHistory) {
+                this.addMessage("bot", this.DEFAULTS.opening_message);
+                this.lsSet(this.KEY_WELCOME, "true");
+            }
         }
     }
 
@@ -326,7 +406,7 @@ class ChatWidget {
         this.hideTooltip();
         this.restoreChatHistory();
 
-        // 🔑 Fetch dynamic data from n8n before showing default welcome (only first open / per session)
+        // Fetch dynamic data from n8n before default welcome (only once per session)
         if (!this.chatConfig) {
             await this.preloadChatData();
         }
@@ -388,7 +468,6 @@ class ChatWidget {
             this.hideTypingIndicator();
             const botMessage = this.addMessage('bot', 'Er ging iets mis.');
             this.lastBotMessage = botMessage;
-            console.error(err);
         }
     }
 
@@ -459,10 +538,10 @@ class ChatWidget {
 
         if (isUseful) {
             thumbsUp.classList.add('chat-widget__feedback-btn--active');
-            this.addMessage('bot', 'Dank je! Fijn dat ik je kon helpen. 😊');
+            this.addMessage('bot', this?.texts?.success || this.DEFAULTS.success_text);
         } else {
             thumbsDown.classList.add('chat-widget__feedback-btn--active');
-            this.addMessage('bot', 'Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?');
+            this.addMessage('bot', this?.texts?.notUseful || this.DEFAULTS.not_useful_text);
         }
 
         thumbsUp.setAttribute('disabled', true);
@@ -479,13 +558,12 @@ class ChatWidget {
                 sessionId: this.sessionId,
                 ...(this.userId && { userId: this.userId })
             })
-        }).catch(err => {
-            console.error('Feedback verzenden mislukt:', err);
-        });
+        }).catch(() => {});
     }
 
     handleContact() {
-        this.addMessage('bot', `Perfect! Je kunt direct contact opnemen via:<br>📞 Telefoon: 0182 359 303<br>📧 Email: hallo@draadwerk.nl<br><br>Of ik kan zorgen dat iemand je terugbelt. Wat heeft jouw voorkeur?`);
+        const html = (this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g, "<br>");
+        this.addMessage('bot', html);
     }
 
     // ---------- Persisted chat ----------
@@ -528,7 +606,7 @@ class ChatWidget {
         if (!alreadyWelcomed) {
             this.addMessage(
                 'bot',
-                'Hallo! Ik ben Lotte van Draadwerk. Als AI-assistente help ik je graag verder. Hoe kan ik je vandaag helpen? Stel je vraag hieronder.'
+                this.DEFAULTS.opening_message
             );
             this.lsSet(this.KEY_WELCOME, 'true');
         }

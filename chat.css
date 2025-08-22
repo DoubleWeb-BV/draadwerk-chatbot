@@ -116,8 +116,8 @@
     position: fixed;
     bottom: 20px;
     right: 20px;
-    width: 400px;
-    height: 580px;
+    width: 420px;
+    height: 600px;
     border-radius: 12px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.15);
     transform: scale(0.8) translateY(20px);

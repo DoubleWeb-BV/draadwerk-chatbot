@@ -11,7 +11,6 @@
     const cssURL  = `${baseCDN}chat.css?ts=${timestamp}`;
     const htmlURL = `${baseCDN}chat.html?ts=${timestamp}`;
     const jsURL   = `${baseCDN}chat.js?ts=${timestamp}`;
-    const imgURL  = `${baseCDN}profile.png?ts=${timestamp}`;
 
     try {
         // CSS injecteren en wachten tot geladen
@@ -33,26 +32,6 @@
         wrapper.innerHTML = html;
         document.body.appendChild(wrapper);
         console.log("[Chatbot Loader] HTML geïnjecteerd");
-
-        // Profielfoto #1
-        const profileImage1 = document.getElementById('js-profile-image');
-        if (profileImage1) {
-            profileImage1.src = imgURL;
-            profileImage1.onerror = () => {
-                console.warn("[Chatbot Loader] Profielfoto #1 niet gevonden, gebruik fallback.");
-                profileImage1.src = 'https://via.placeholder.com/40?text=?';
-            };
-        }
-
-        // Profielfoto #2
-        const profileImage2 = document.getElementById('js-profile-image-2');
-        if (profileImage2) {
-            profileImage2.src = imgURL;
-            profileImage2.onerror = () => {
-                console.warn("[Chatbot Loader] Profielfoto #2 niet gevonden, gebruik fallback.");
-                profileImage2.src = 'https://via.placeholder.com/40?text=?';
-            };
-        }
 
         // JS laden en pas daarna initialiseren
         await new Promise((resolve, reject) => {

@@ -331,6 +331,11 @@
     align-items: flex-end;
 }
 
+#chat-widget ::selection {
+    background: var(--secondary-color);
+    color: #fff;
+}
+
 #chat-widget .chat-widget__input {
     flex: 1;
     border: 2px solid #e9ecef;

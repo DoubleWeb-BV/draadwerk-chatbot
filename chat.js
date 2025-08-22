@@ -32,7 +32,7 @@ class ChatWidget {
 
         // Neutral fallbacks
         this.DEFAULTS = {
-            avatar_url: "profile.png",
+            avatar_url: "",   // no fallback
             chatbot_name: "AI Assistent",
             name_subtitle: "Virtuele assistent",
             tooltip: "Kan ik je helpen?",
@@ -337,8 +337,10 @@ class ChatWidget {
         // Avatars
         const avatar1 = $("#js-profile-image");
         const avatar2 = $("#js-profile-image-2");
-        if (avatar1) avatar1.src = cfg.avatar_url;
-        if (avatar2) avatar2.src = cfg.avatar_url;
+        if (cfg.avatar_url) {
+            if (avatar1) avatar1.src = cfg.avatar_url;
+            if (avatar2) avatar2.src = cfg.avatar_url;
+        }
 
         // Header
         const headerTitle = $(".chat-widget__header-title");

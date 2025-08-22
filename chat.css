@@ -340,11 +340,12 @@
     resize: none;
     outline: none;
     transition: border-color 0.2s ease;
-    font-family: inherit;
     max-height: 100px;
     scrollbar-width: none;
     -ms-overflow-style: none;
     height: auto;
+    min-height: unset;
+    margin-bottom: unset;
 }
 
 #chat-widget .chat-widget__input::-webkit-scrollbar {

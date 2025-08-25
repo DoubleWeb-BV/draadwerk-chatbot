@@ -461,8 +461,8 @@
 
 #chat-widget .chat-widget__ai-badge {
     position: absolute;
-    top: -8px;
-    left: -8px;
+    top: 0;
+    left: 0;
     background: var(--primary-color);
     color: white;
     font-size: 10px;

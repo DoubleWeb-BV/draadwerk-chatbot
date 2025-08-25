@@ -1,0 +1,28 @@
+name: Move v1 tag & purge jsDelivr
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-and-purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move v1 to this release
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags origin
+          # Tag name of the release, e.g. v1.1.06
+          TAG="${{ github.event.release.tag_name }}"
+          git tag -f v1 "$TAG"
+          git push origin -f v1
+
+      - name: Purge jsDelivr cache for v1
+        run: |
+          # Purge the CDN so the new tag is live immediately
+          curl -s "https://purge.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@v1/chatbot-loader.js"

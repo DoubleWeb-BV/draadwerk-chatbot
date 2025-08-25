@@ -36,8 +36,8 @@
 }
 
 #chat-widget .chat-widget__button {
-    width: 60px;
-    height: 60px;
+    width: 80px;
+    height: 80px;
     border-radius: 50%;
     border: none;
     cursor: pointer;
@@ -116,8 +116,8 @@
     position: fixed;
     bottom: 20px;
     right: 20px;
-    width: 420px;
-    height: 600px;
+    width: 400px;
+    height: 580px;
     border-radius: 12px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.15);
     transform: scale(0.8) translateY(20px);
@@ -528,8 +528,8 @@
 }
 
 #chat-widget .chat-widget__tooltip {
-    right: 70px;
-    bottom: 10px;
+    right: 90px;
+    bottom: 20px;
 }
 
 @keyframes messageSlideIn {

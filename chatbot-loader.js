@@ -3,10 +3,7 @@
 
     // Stap 1: Bepaal het script dat zichzelf aanroept
     const currentScript = document.currentScript || [...document.scripts].pop();
-    const scriptSrc = currentScript.src;
-    const versionMatch = scriptSrc.match(/@([^/]+)\/chatbot-loader\.js/);
-    const version = versionMatch ? versionMatch[1] : 'latest';
-    const baseCDN = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@${version}/`;
+    const baseCDN = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot/`;
 
     const cssURL  = `${baseCDN}chat.css?ts=${timestamp}`;
     const htmlURL = `${baseCDN}chat.html?ts=${timestamp}`;

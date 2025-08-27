@@ -1,7 +1,25 @@
 class ChatWidget {
-    constructor(webhookURL, sessionId = null, userId) {
-        this.webhookURL = webhookURL; // message/feedback webhook
+    /**
+     * @param {string} webhookURL - streaming message webhook (NDJSON line per chunk)
+     * @param {string|null} sessionId
+     * @param {string|undefined} userId
+     * @param {string} websiteId - REQUIRED for your n8n flow
+     * @param {{typeDelayMs?:number, charsPerTick?:number}} typingOpts
+     */
+    constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
+        this.webhookURL = webhookURL;   // message webhook (NDJSON streaming)
         this.userId = userId;
+        this.websiteId = websiteId;
+
+        // ---- Typing config (defaults as requested) ----
+        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs) ? typingOpts.typeDelayMs : 8; // ms
+        this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 2;
+
+        // ---- Internal typing state ----
+        this._typingQueue = "";
+        this._typingLoopRunning = false;
+        this._currentAbort = null;      // AbortController for in-flight stream
+        this._lastFullText = "";        // For optional replay if you want later
 
         // ----- Constants / keys
         this.LS_PREFIX = "dwChat:";
@@ -32,7 +50,7 @@ class ChatWidget {
 
         // Neutral fallbacks
         this.DEFAULTS = {
-            avatar_url: "",   // no fallback
+            avatar_url: "",
             chatbot_name: "AI Assistent",
             name_subtitle: "Virtuele assistent",
             tooltip: "Kan ik je helpen?",
@@ -381,6 +399,7 @@ class ChatWidget {
     // ---------- Preload from n8n (POST) ----------
     async preloadChatData() {
         try {
+            // keep your existing config webhook
             const res = await fetch("https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -402,7 +421,7 @@ class ChatWidget {
             const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
             const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
             if (!alreadyWelcomed && !hasHistory) {
-                this.addMessage("bot", this.DEFAULTS.opening_message);
+                this.addMessage('bot', this.DEFAULTS.opening_message);
                 this.lsSet(this.KEY_WELCOME, 'true');
             }
         }
@@ -452,42 +471,202 @@ class ChatWidget {
         }
     }
 
-    // ---------- Messaging ----------
+    // ---------- Typing engine ----------
+    async _startTypingLoop() {
+        if (this._typingLoopRunning) return;
+        this._typingLoopRunning = true;
+
+        const outContainer = document.getElementById('chatMessages');
+        // Ensure we always append into the last bot bubble being streamed
+        let liveBubble = this.lastBotMessage;
+
+        while (this._typingQueue.length > 0) {
+            const n = Math.max(1, this.charsPerTick | 0);
+            const delay = Math.max(0, this.typeDelayMs | 0);
+
+            const chunk = this._typingQueue.slice(0, n);
+            this._typingQueue = this._typingQueue.slice(n);
+
+            // If there is no live bubble yet, create one
+            if (!liveBubble) {
+                liveBubble = this.addMessage('bot', '', true /* restoring to avoid double-save during stream */);
+                this.lastBotMessage = liveBubble;
+            }
+
+            const textEl = liveBubble.querySelector('.chat-widget__message-text');
+            if (textEl) {
+                // We keep the text as plain text while streaming, convert \n to <br> at the end
+                textEl.textContent += chunk;
+            }
+
+            if (outContainer) outContainer.scrollTop = outContainer.scrollHeight;
+
+            if (delay > 0) {
+                await new Promise(r => setTimeout(r, delay));
+            } else {
+                await new Promise(requestAnimationFrame);
+            }
+        }
+
+        this._typingLoopRunning = false;
+    }
+
+    // ---------- Messaging (STREAMING NDJSON) ----------
     async sendMessage() {
         const input = document.getElementById('chatInput');
         const message = input?.value.trim();
         if (!message) return;
 
+        // Save user message
         this.addMessage('user', message);
         if (input) input.value = '';
         const sendBtn = document.getElementById('chatSend');
         if (sendBtn) sendBtn.disabled = true;
 
+        // If a previous stream is active, abort it
+        if (this._currentAbort) {
+            try { this._currentAbort.abort(); } catch {}
+            this._currentAbort = null;
+        }
+
         this.showTypingIndicator();
+
+        // Prepare a fresh live bubble for streaming
+        const liveBubble = this.addMessage('bot', '', true /* avoid saving partial */);
+        this.lastBotMessage = liveBubble;
+
+        const ac = new AbortController();
+        this._currentAbort = ac;
+
+        // Reset replay/full text buffer
+        this._lastFullText = "";
 
         try {
             const res = await fetch(this.webhookURL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                // EXACT body your streaming webhook expects:
                 body: JSON.stringify({
-                    type: 'message',
-                    question: message,
+                    message,                  // "Wat zijn de kernwaarden van draadwerk?" etc.
                     sessionId: this.sessionId,
-                    channel: "website",
-                    ...(this.userId && { userId: this.userId })
-                })
+                    websiteId: this.websiteId
+                }),
+                signal: ac.signal
             });
 
-            const { text } = await res.json();
+            if (!res.ok || !res.body) {
+                throw new Error(`Netwerkfout of geen stream body (status ${res.status})`);
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            // Hide the typing dots since we render our own typed text now
             this.hideTypingIndicator();
 
-            const botHTML = (text || 'Geen antwoord ontvangen.').replace(/\n/g, '<br>');
-            const botMessage = this.addMessage('bot', botHTML);
-            this.lastBotMessage = botMessage;
-        } catch (_err) {
+            // Stream loop
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunkText = decoder.decode(value, { stream: true });
+                buffer += chunkText;
+
+                // NDJSON: split on newlines; keep trailing partial line in buffer
+                const lines = buffer.split("\n");
+                buffer = lines.pop() ?? "";
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    try {
+                        const obj = JSON.parse(trimmed);
+                        if (obj.type === "item" && obj.content) {
+                            // append to queue and type it
+                            this._typingQueue += obj.content;
+                            this._lastFullText += obj.content;
+                            this._startTypingLoop();
+                        }
+                    } catch (e) {
+                        // ignore malformed line
+                        console.warn("Kon NDJSON niet parsen:", line, e);
+                    }
+                }
+            }
+
+            // Flush last (possibly partial) line
+            if (buffer.trim()) {
+                try {
+                    const lastObj = JSON.parse(buffer);
+                    if (lastObj.type === "item" && lastObj.content) {
+                        this._typingQueue += lastObj.content;
+                        this._lastFullText += lastObj.content;
+                        this._startTypingLoop();
+                    }
+                } catch {}
+            }
+
+            // Ensure typing queue is fully rendered before we finalize the bubble
+            await this._waitForTypingToDrain();
+
+            // Convert the live bubble's textContent into HTML (respect \n)
+            const textEl = liveBubble.querySelector('.chat-widget__message-text');
+            if (textEl && textEl.textContent) {
+                const html = textEl.textContent.replace(/\n/g, "<br>");
+                textEl.innerHTML = html;
+            }
+
+            // Persist the final bot message to history
+            this.saveMessageToSession({
+                type: 'bot',
+                htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
+                timestamp: new Date().toISOString()
+            });
+
+            // Enable feedback buttons
+            this.lastBotMessage = liveBubble;
+            document.getElementById('thumbsUp')?.removeAttribute('disabled');
+            document.getElementById('thumbsDown')?.removeAttribute('disabled');
+
+        } catch (err) {
             this.hideTypingIndicator();
-            const botMessage = this.addMessage('bot', 'Er ging iets mis.');
-            this.lastBotMessage = botMessage;
+            if (err?.name === "AbortError") {
+                this._appendToLiveBubble(liveBubble, "\n\n⏹️ Verzoek afgebroken.");
+            } else {
+                console.error(err);
+                this._appendToLiveBubble(liveBubble, "Er ging iets mis.");
+            }
+
+            // finalize + save error bubble
+            await this._waitForTypingToDrain();
+            const textEl = liveBubble.querySelector('.chat-widget__message-text');
+            if (textEl) textEl.innerHTML = (textEl.textContent || "").replace(/\n/g, "<br>");
+            this.saveMessageToSession({
+                type: 'bot',
+                htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
+                timestamp: new Date().toISOString()
+            });
+        } finally {
+            if (sendBtn) sendBtn.disabled = false;
+            this._currentAbort = null;
+        }
+    }
+
+    _appendToLiveBubble(bubble, text) {
+        if (!bubble) return;
+        const textEl = bubble.querySelector('.chat-widget__message-text');
+        if (textEl) {
+            textEl.textContent += text;
+            const messages = document.getElementById('chatMessages');
+            if (messages) messages.scrollTop = messages.scrollHeight;
+        }
+    }
+
+    async _waitForTypingToDrain() {
+        // wait until queue empties and loop stops
+        while (this._typingQueue.length > 0 || this._typingLoopRunning) {
+            await new Promise(r => setTimeout(r, 10));
         }
     }
 
@@ -565,6 +744,7 @@ class ChatWidget {
 
         const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
 
+        // Optional: your streaming webhook likely ignores this; keep for parity
         fetch(this.webhookURL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -572,6 +752,7 @@ class ChatWidget {
                 type: 'feedback',
                 feedback: feedbackLabel,
                 sessionId: this.sessionId,
+                websiteId: this.websiteId,
                 ...(this.userId && { userId: this.userId })
             })
         }).catch(() => {});

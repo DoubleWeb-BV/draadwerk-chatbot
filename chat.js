@@ -5,19 +5,19 @@ class ChatWidget {
      * @param {string|null} sessionId
      * @param {string|undefined} userId
      * @param {string} websiteId - REQUIRED for your n8n flow
-     * @param {{typeDelayMs?:number, charsPerTick?:number, configWebhookURL?:string}} typingOpts
+     * @param {{typeDelayMs?:number, charsPerTick?:number}} typingOpts
      */
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
         // Endpoints
         this.webhookURL = webhookURL; // streaming webhook
-        this.configWebhookURL =
-            typeof typingOpts.configWebhookURL === "string" && typingOpts.configWebhookURL.trim()
-                ? typingOpts.configWebhookURL.trim()
-                : "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526";
+        this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g"; // <— hard-coded
 
         // Identity
-        this.userId = userId;
-        this.websiteId = websiteId;
+        this.userId = userId;       // not sent to config webhook
+        this.websiteId = websiteId; // will be sent
+        if (!this.websiteId) {
+            console.warn("[ChatWidget] websiteId is falsy; config webhook will get null.");
+        }
 
         // Typing FX (defaults: 8ms, 2 chars)
         this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 8;
@@ -191,15 +191,10 @@ class ChatWidget {
         });
 
         chatTooltip?.addEventListener('click', async()=>{
-            await this.toggleChat();
-            this.dismissTooltip();
+            await this.toggleChat(); this.dismissTooltip();
         });
         chatTooltip?.addEventListener('keydown', async(e)=>{
-            if(e.key==='Enter' || e.key===' '){
-                e.preventDefault();
-                await this.toggleChat();
-                this.dismissTooltip();
-            }
+            if(e.key==='Enter' || e.key===' '){ e.preventDefault(); await this.toggleChat(); this.dismissTooltip(); }
         });
 
         ['click','keydown','scroll','pointerdown'].forEach(evt =>
@@ -296,7 +291,6 @@ class ChatWidget {
         };
         this.chatConfig = cfg;
 
-        // Apply colors
         this.applyTheme(cfg.primary_color, cfg.secondary_color);
 
         const $ = (sel)=>document.querySelector(sel);
@@ -338,20 +332,20 @@ class ChatWidget {
     // ---------- Preload from n8n (POST) ----------
     async preloadChatData(){
         try{
-            const res = await fetch(this.configWebhookURL, {
+            const res = await fetch(this.CONFIG_WEBHOOK, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                // EXACTLY send websiteId + sessionId (no userId)
                 body: JSON.stringify({
-                    websiteId: this.websiteId || null,   // <— REQUIRED
-                    sessionId: this.sessionId || null    // <— REQUIRED
-                    // (no userId here)
+                    websiteId: this.websiteId || null,
+                    sessionId: this.sessionId || null
                 })
             });
             if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
             const data = await res.json();
             this.applyRemoteConfig(data);
         } catch (_err){
-            // Fallback: apply defaults and reveal
+            // Fallback: defaults
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
             this.configLoaded = true;
             this.revealWidget();
@@ -453,7 +447,7 @@ class ChatWidget {
         const message=input?.value.trim();
         if(!message) return;
 
-        // Save user message immediately
+        // Save user message
         this.addMessage('user', message);
         if(input) input.value='';
         const sendBtn=document.getElementById('chatSend');
@@ -462,10 +456,8 @@ class ChatWidget {
         // Cancel any in-flight stream
         if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
 
-        // Show only typing dots first
+        // Show typing dots first; bubble is created only after first chunk
         this.showTypingIndicator();
-
-        // We will create the bot bubble only after first chunk arrives:
         let liveBubble = null;
 
         const ac = new AbortController();
@@ -477,7 +469,7 @@ class ChatWidget {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    message,                  // user message
+                    message,
                     sessionId: this.sessionId,
                     websiteId: this.websiteId
                 }),
@@ -492,7 +484,6 @@ class ChatWidget {
             const decoder = new TextDecoder();
             let buffer = "";
 
-            // Stream loop
             while(true){
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -509,20 +500,16 @@ class ChatWidget {
                     try {
                         const obj = JSON.parse(trimmed);
                         if (obj.type === "item" && obj.content) {
-
-                            // First chunk: hide dots & create the live bubble now
                             if (!liveBubble) {
                                 this.hideTypingIndicator();
-                                liveBubble = this.addMessage('bot', '', true); // avoid saving partial
+                                liveBubble = this.addMessage('bot', '', true);
                                 this.lastBotMessage = liveBubble;
                             }
-
                             this._typingQueue += obj.content;
                             this._lastFullText += obj.content;
                             this._startTypingLoop();
                         }
                     } catch (e) {
-                        // ignore malformed
                         console.warn("Kon NDJSON niet parsen:", line, e);
                     }
                 }
@@ -545,35 +532,29 @@ class ChatWidget {
                 } catch {}
             }
 
-            // If stream returned nothing, at least hide typing and show a fallback
             if (!liveBubble) {
                 this.hideTypingIndicator();
                 liveBubble = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
             }
 
-            // Wait for typing to finish
             await this._waitForTypingToDrain();
 
-            // Convert textContent to HTML (respect newlines)
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
             if (textEl && textEl.textContent) {
                 textEl.innerHTML = textEl.textContent.replace(/\n/g, "<br>");
             }
 
-            // Save final bot message
             this.saveMessageToSession({
                 type: 'bot',
                 htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
                 timestamp: new Date().toISOString()
             });
 
-            // Enable feedback
             this.lastBotMessage = liveBubble;
             document.getElementById('thumbsUp')?.removeAttribute('disabled');
             document.getElementById('thumbsDown')?.removeAttribute('disabled');
 
         } catch (err) {
-            // If we never created the bubble, create it now
             if (!liveBubble) {
                 this.hideTypingIndicator();
                 liveBubble = this.addMessage('bot', '', true);
@@ -676,7 +657,6 @@ class ChatWidget {
 
         const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
 
-        // Optional: many streaming backends ignore this
         fetch(this.webhookURL, {
             method:'POST',
             headers:{'Content-Type':'application/json'},
@@ -701,8 +681,7 @@ class ChatWidget {
         history.push(message);
         this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
         this.postChannel({ type:"historyChanged" });
-        // write again to ensure 'storage' event fires in other tabs (Safari quirk)
-        this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
+        this.lsSet(this.KEY_HISTORY, JSON.stringify(history)); // Safari quirk
     }
 
     restoreChatHistory(){
@@ -727,7 +706,6 @@ class ChatWidget {
         this.chatRestored=false;
     }
 
-    // Legacy helper (kept)
     maybeAddWelcomeMessage(){
         const alreadyWelcomed=this.lsGet(this.KEY_WELCOME);
         if(!alreadyWelcomed){

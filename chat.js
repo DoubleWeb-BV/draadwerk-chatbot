@@ -1,3 +1,4 @@
+// chat.js
 class ChatWidget {
     /**
      * @param {string} webhookURL - streaming message webhook (NDJSON line per chunk)
@@ -7,27 +8,32 @@ class ChatWidget {
      * @param {{typeDelayMs?:number, charsPerTick?:number}} typingOpts
      */
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
-        this.webhookURL = webhookURL;   // message webhook (NDJSON streaming)
+        // --- Endpoints ---
+        this.webhookURL = webhookURL; // streaming endpoint
+        // ✅ Config/preload endpoint (PAS AAN indien je 'webhook-test' gebruikt)
+        this.configWebhookURL = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526";
+
+        // --- Identity ---
         this.userId = userId;
         this.websiteId = websiteId;
 
-        // ---- Typing config (defaults as requested) ----
-        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs) ? typingOpts.typeDelayMs : 8; // ms
+        // --- Typing config ---
+        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs) ? typingOpts.typeDelayMs : 8;
         this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 2;
 
-        // ---- Internal typing state ----
+        // --- Internal typing state ---
         this._typingQueue = "";
         this._typingLoopRunning = false;
-        this._currentAbort = null;      // AbortController for in-flight stream
-        this._lastFullText = "";        // For optional replay if you want later
+        this._currentAbort = null;
+        this._lastFullText = "";
 
-        // ----- Constants / keys
+        // --- Keys / storage ---
         this.LS_PREFIX = "dwChat:";
         this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
         this.KEY_HISTORY    = null; // depends on sessionId
-        this.KEY_WELCOME    = null; // depends on sessionId
-        this.KEY_OPEN       = null; // depends on sessionId
-        this.KEY_TOOLTIP    = null; // depends on sessionId
+        this.KEY_WELCOME    = null;
+        this.KEY_OPEN       = null;
+        this.KEY_TOOLTIP    = null;
 
         // Tab fingerprint + last-seen
         this.SS_TAB_ID      = this.LS_PREFIX + "tabId";
@@ -48,7 +54,6 @@ class ChatWidget {
             cta: "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0000 - 000 000 <br>📧 E-mail: info@example.com",
         };
 
-        // Neutral fallbacks
         this.DEFAULTS = {
             avatar_url: "",
             chatbot_name: "AI Assistent",
@@ -397,19 +402,15 @@ class ChatWidget {
     }
 
     // ---------- Preload from n8n (POST) ----------
-    a// ---------- Preload from n8n (POST) ----------
     async preloadChatData() {
         try {
-            // ✅ Gebruik de juiste URL (haal 'g' weg als dat per ongeluk was)
-            const res = await fetch("https://workflows.draadwerk.nl/webhook-test/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g", {
+            // Stuur websiteId + sessionId (géén userId)
+            const res = await fetch(this.configWebhookURL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    // ✅ Stuur websiteId i.p.v. userId
                     websiteId: this.websiteId || null,
-                    sessionId: this.sessionId || null,
-                    // (optioneel) als je tóch ook userId wilt meesturen, doe dit expliciet:
-                    // userId: this.userId || null
+                    sessionId: this.sessionId || null
                 })
             });
             if (!res.ok) throw new Error(`Webhook error: ${res.status}`);
@@ -430,7 +431,6 @@ class ChatWidget {
             }
         }
     }
-
 
     // ---------- Open / Close ----------
     async toggleChat() {
@@ -482,7 +482,6 @@ class ChatWidget {
         this._typingLoopRunning = true;
 
         const outContainer = document.getElementById('chatMessages');
-        // Ensure we always append into the last bot bubble being streamed
         let liveBubble = this.lastBotMessage;
 
         while (this._typingQueue.length > 0) {
@@ -492,16 +491,14 @@ class ChatWidget {
             const chunk = this._typingQueue.slice(0, n);
             this._typingQueue = this._typingQueue.slice(n);
 
-            // If there is no live bubble yet, create one
             if (!liveBubble) {
-                liveBubble = this.addMessage('bot', '', true /* restoring to avoid double-save during stream */);
+                liveBubble = this.addMessage('bot', '', true /* avoid double-save during stream */);
                 this.lastBotMessage = liveBubble;
             }
 
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
             if (textEl) {
-                // We keep the text as plain text while streaming, convert \n to <br> at the end
-                textEl.textContent += chunk;
+                textEl.textContent += chunk; // plain text while streaming
             }
 
             if (outContainer) outContainer.scrollTop = outContainer.scrollHeight;
@@ -528,7 +525,7 @@ class ChatWidget {
         const sendBtn = document.getElementById('chatSend');
         if (sendBtn) sendBtn.disabled = true;
 
-        // If a previous stream is active, abort it
+        // Abort vorige stream
         if (this._currentAbort) {
             try { this._currentAbort.abort(); } catch {}
             this._currentAbort = null;
@@ -536,23 +533,21 @@ class ChatWidget {
 
         this.showTypingIndicator();
 
-        // Prepare a fresh live bubble for streaming
+        // Prepare live bubble
         const liveBubble = this.addMessage('bot', '', true /* avoid saving partial */);
         this.lastBotMessage = liveBubble;
 
         const ac = new AbortController();
         this._currentAbort = ac;
 
-        // Reset replay/full text buffer
         this._lastFullText = "";
 
         try {
             const res = await fetch(this.webhookURL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                // EXACT body your streaming webhook expects:
                 body: JSON.stringify({
-                    message,                  // "Wat zijn de kernwaarden van draadwerk?" etc.
+                    message,
                     sessionId: this.sessionId,
                     websiteId: this.websiteId
                 }),
@@ -567,10 +562,9 @@ class ChatWidget {
             const decoder = new TextDecoder();
             let buffer = "";
 
-            // Hide the typing dots since we render our own typed text now
+            // We render zelf typed text; dots uit
             this.hideTypingIndicator();
 
-            // Stream loop
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -578,7 +572,6 @@ class ChatWidget {
                 const chunkText = decoder.decode(value, { stream: true });
                 buffer += chunkText;
 
-                // NDJSON: split on newlines; keep trailing partial line in buffer
                 const lines = buffer.split("\n");
                 buffer = lines.pop() ?? "";
 
@@ -588,19 +581,17 @@ class ChatWidget {
                     try {
                         const obj = JSON.parse(trimmed);
                         if (obj.type === "item" && obj.content) {
-                            // append to queue and type it
                             this._typingQueue += obj.content;
                             this._lastFullText += obj.content;
                             this._startTypingLoop();
                         }
                     } catch (e) {
-                        // ignore malformed line
+                        // ongeldige rule → negeren
                         console.warn("Kon NDJSON niet parsen:", line, e);
                     }
                 }
             }
 
-            // Flush last (possibly partial) line
             if (buffer.trim()) {
                 try {
                     const lastObj = JSON.parse(buffer);
@@ -612,24 +603,23 @@ class ChatWidget {
                 } catch {}
             }
 
-            // Ensure typing queue is fully rendered before we finalize the bubble
+            // wachten tot typing klaar is
             await this._waitForTypingToDrain();
 
-            // Convert the live bubble's textContent into HTML (respect \n)
+            // plain → HTML (respect \n)
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
             if (textEl && textEl.textContent) {
-                const html = textEl.textContent.replace(/\n/g, "<br>");
-                textEl.innerHTML = html;
+                textEl.innerHTML = textEl.textContent.replace(/\n/g, "<br>");
             }
 
-            // Persist the final bot message to history
+            // Persist final bot msg
             this.saveMessageToSession({
                 type: 'bot',
                 htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
                 timestamp: new Date().toISOString()
             });
 
-            // Enable feedback buttons
+            // Enable feedback
             this.lastBotMessage = liveBubble;
             document.getElementById('thumbsUp')?.removeAttribute('disabled');
             document.getElementById('thumbsDown')?.removeAttribute('disabled');
@@ -643,7 +633,6 @@ class ChatWidget {
                 this._appendToLiveBubble(liveBubble, "Er ging iets mis.");
             }
 
-            // finalize + save error bubble
             await this._waitForTypingToDrain();
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
             if (textEl) textEl.innerHTML = (textEl.textContent || "").replace(/\n/g, "<br>");
@@ -669,7 +658,6 @@ class ChatWidget {
     }
 
     async _waitForTypingToDrain() {
-        // wait until queue empties and loop stops
         while (this._typingQueue.length > 0 || this._typingLoopRunning) {
             await new Promise(r => setTimeout(r, 10));
         }
@@ -749,7 +737,6 @@ class ChatWidget {
 
         const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
 
-        // Optional: your streaming webhook likely ignores this; keep for parity
         fetch(this.webhookURL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -775,7 +762,7 @@ class ChatWidget {
         this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
 
         this.postChannel({ type: "historyChanged" });
-        this.lsSet(this.KEY_HISTORY, JSON.stringify(history)); // ensure storage event triggers
+        this.lsSet(this.KEY_HISTORY, JSON.stringify(history)); // trigger storage event
     }
 
     restoreChatHistory() {
@@ -801,7 +788,6 @@ class ChatWidget {
         this.chatRestored = false;
     }
 
-    // Kept for compatibility (not used if welcome already added on config load)
     maybeAddWelcomeMessage() {
         const alreadyWelcomed = this.lsGet(this.KEY_WELCOME);
         if (!alreadyWelcomed) {

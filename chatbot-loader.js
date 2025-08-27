@@ -1,7 +1,8 @@
+// chatbot-loader.js
 (async function () {
     const timestamp = Date.now();
 
-    // 1) Bepaal verwijzend <script> element (met data-attributes)
+    // 1) Bepaal verwijzende <script> element (met data-attributes)
     const currentScript = document.currentScript || [...document.scripts].pop();
     const scriptSrc = currentScript?.src || "";
     const versionMatch = scriptSrc.match(/@([^/]+)\/chatbot-loader\.js/);
@@ -14,9 +15,12 @@
 
     // 2) Lees instellingen uit data-attributes
     const userId        = currentScript?.dataset?.userId || null;
-    const websiteId     = currentScript?.dataset?.websiteId || null; // <-- vereist voor jouw n8n
+    let websiteId       = currentScript?.dataset?.websiteId || null; // <-- vereist voor jouw n8n
     const typeDelayAttr = currentScript?.dataset?.typeDelay;
     const cptAttr       = currentScript?.dataset?.charsPerTick;
+
+    // Backwards-compat (optioneel): gebruik userId als websiteId indien websiteId ontbreekt
+    if (!websiteId && userId) websiteId = userId;
 
     // Defaults zoals gevraagd: 8ms / 2 chars
     const typingOpts = {
@@ -24,8 +28,8 @@
         charsPerTick: Number.isFinite(Number(cptAttr))       ? Number(cptAttr)       : 2,
     };
 
-    // 3) Streaming webhook (NDJSON)
-    const webhookURL = "https://workflows.draadwerk.nl/webhook/6d7815bf-da68-4e19-81c2-0575a091afba";
+    // 3) Streaming webhook (NDJSON) – dit is de endpoint voor de AI-antwoord-stream
+    const STREAM_WEBHOOK = "https://workflows.draadwerk.nl/webhook/6d7815bf-da68-4e19-81c2-0575a091afba";
 
     // 4) Maak sessie-id (stabiel per page-load)
     const sessionId = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
@@ -38,56 +42,47 @@
             const link = document.createElement("link");
             link.rel = "stylesheet";
             link.href = cssURL;
-            link.onload = () => {
-                console.log("[Chatbot Loader] CSS geladen");
-                resolve();
-            };
+            link.onload = () => resolve();
             link.onerror = reject;
             document.head.appendChild(link);
         });
 
         // HTML injecteren
         const html = await fetch(htmlURL).then(r => {
-            if (!r.ok) throw new Error("HTML niet gevonden");
+            if (!r.ok) throw new Error("chat.html niet gevonden");
             return r.text();
         });
         const wrapper = document.createElement("div");
         wrapper.innerHTML = html;
         document.body.appendChild(wrapper);
-        console.log("[Chatbot Loader] HTML geïnjecteerd");
 
         // JS laden
         await new Promise((resolve, reject) => {
             const script = document.createElement("script");
             script.src = jsURL;
-            script.onload = () => {
-                console.log("[Chatbot Loader] JS geladen");
-
-                // ==== Validatie websiteId ====
-                if (!websiteId) {
-                    console.error("[Chatbot Loader] 'data-website-id' ontbreekt op het loader-script. Voeg deze toe aan de <script>-tag.");
-                }
-
-                // ==== Initialiseer ChatWidget ====
-                if (typeof ChatWidget !== "undefined") {
-                    // Constructor: (webhookURL, sessionId, userId, websiteId, typingOpts)
-                    new ChatWidget(
-                        webhookURL,
-                        sessionId,
-                        userId,
-                        websiteId,
-                        typingOpts
-                    );
-                } else {
-                    console.error("[Chatbot Loader] ChatWidget niet gevonden (chat.js laadde niet correct?).");
-                }
-
-                resolve();
-            };
+            script.onload = () => resolve();
             script.onerror = reject;
             document.body.appendChild(script);
         });
 
+        // Validatie websiteId
+        if (!websiteId) {
+            console.error("[Chatbot Loader] 'data-website-id' ontbreekt op het loader-script. Voeg deze toe aan de <script>-tag.");
+        }
+
+        // Initialiseer ChatWidget
+        if (typeof ChatWidget !== "undefined") {
+            // Constructor: (webhookURL, sessionId, userId, websiteId, typingOpts)
+            new ChatWidget(
+                STREAM_WEBHOOK,
+                sessionId,
+                userId,
+                websiteId,
+                typingOpts
+            );
+        } else {
+            console.error("[Chatbot Loader] ChatWidget niet gevonden (chat.js laadde niet correct?).");
+        }
     } catch (err) {
         console.error("[Chatbot Loader] Fout bij laden:", err);
     }

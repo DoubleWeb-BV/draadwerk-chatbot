@@ -10,13 +10,13 @@ class ChatWidget {
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
         // Endpoints
         this.webhookURL = webhookURL; // streaming webhook
-        this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g"; // <— hard-coded
+        this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
 
         // Identity
-        this.userId = userId;       // not sent to config webhook
-        this.websiteId = websiteId; // will be sent
+        this.userId = userId;       // niet nodig voor config webhook
+        this.websiteId = websiteId; // WEL nodig
         if (!this.websiteId) {
-            console.warn("[ChatWidget] websiteId is falsy; config webhook will get null.");
+            console.warn("[ChatWidget] websiteId is leeg; config webhook krijgt null.");
         }
 
         // Typing FX (defaults: 8ms, 2 chars)
@@ -36,6 +36,7 @@ class ChatWidget {
         this.KEY_WELCOME    = null;
         this.KEY_OPEN       = null;
         this.KEY_TOOLTIP    = null;
+        this.KEY_CONFIG     = `${this.LS_PREFIX}config:${this.websiteId || "default"}`;
 
         // Tab + last seen
         this.SS_TAB_ID     = this.LS_PREFIX + "tabId";
@@ -49,6 +50,7 @@ class ChatWidget {
         this.chatConfig = null;
         this.configLoaded = false;
         this.configReady = null;
+        this._sessionJustCreated = false; // wordt gezet in loadOrCreateSessionId
 
         this.texts = {
             success: "Dank je! Fijn dat ik je kon helpen. 😊",
@@ -77,7 +79,7 @@ class ChatWidget {
         this.adoptOrCreateTabId();
         // 2) fresh-start detection
         this.maybeResetForNewBrowser();
-        // 3) session id
+        // 3) session id (zet ook _sessionJustCreated)
         this.sessionId = this.loadOrCreateSessionId(sessionId);
 
         // per-session keys
@@ -146,6 +148,9 @@ class ChatWidget {
         if(!sid){
             sid=provided || ('session-'+Date.now()+'-'+Math.random().toString(36).substr(2,9));
             this.lsSet(this.KEY_SESSION_ID,sid);
+            this._sessionJustCreated = true;
+        } else {
+            this._sessionJustCreated = false;
         }
         return sid;
     }
@@ -157,6 +162,7 @@ class ChatWidget {
         this.setupBroadcastChannel();
         this.setupStorageSync();
 
+        // Config slechts één keer per sessie ophalen; anders uit cache
         this.configReady=this.preloadChatData().catch(()=>{});
         this.configReady.finally(()=>{
             this.restoreOpenState();
@@ -270,18 +276,18 @@ class ChatWidget {
     // ---------- Apply remote config ----------
     applyRemoteConfig(raw){
         const cfg={
-            avatar_url:        this._normalize(raw?.avatar_url,        this.DEFAULTS.avatar_url),
-            chatbot_name:      this._normalize(raw?.chatbot_name,      this.DEFAULTS.chatbot_name),
-            name_subtitle:     this._normalize(raw?.name_subtitle,     this.DEFAULTS.name_subtitle),
-            tooltip:           this._normalize(raw?.tooltip,           this.DEFAULTS.tooltip),
-            opening_message:   this._normalize(raw?.opening_message,   this.DEFAULTS.opening_message),
+            avatar_url:         this._normalize(raw?.avatar_url,         this.DEFAULTS.avatar_url),
+            chatbot_name:       this._normalize(raw?.chatbot_name,       this.DEFAULTS.chatbot_name),
+            name_subtitle:      this._normalize(raw?.name_subtitle,      this.DEFAULTS.name_subtitle),
+            tooltip:            this._normalize(raw?.tooltip,            this.DEFAULTS.tooltip),
+            opening_message:    this._normalize(raw?.opening_message,    this.DEFAULTS.opening_message),
             placeholder_message:this._normalize(raw?.placeholder_message,this.DEFAULTS.placeholder_message),
-            cta_button_text:   this._normalize(raw?.cta_button_text,   this.DEFAULTS.cta_button_text),
-            cta_text:          this._normalize(raw?.cta_text,          this.DEFAULTS.cta_text),
-            success_text:      this._normalize(raw?.success_text,      this.DEFAULTS.success_text),
-            not_useful_text:   this._normalize(raw?.not_useful_text,   this.DEFAULTS.not_useful_text),
-            primary_color:     this._normalize(raw?.primary_color,     this.DEFAULTS.primary_color),
-            secondary_color:   this._normalize(raw?.secondary_color,   this.DEFAULTS.secondary_color),
+            cta_button_text:    this._normalize(raw?.cta_button_text,    this.DEFAULTS.cta_button_text),
+            cta_text:           this._normalize(raw?.cta_text,           this.DEFAULTS.cta_text),
+            success_text:       this._normalize(raw?.success_text,       this.DEFAULTS.success_text),
+            not_useful_text:    this._normalize(raw?.not_useful_text,    this.DEFAULTS.not_useful_text),
+            primary_color:      this._normalize(raw?.primary_color,      this.DEFAULTS.primary_color),
+            secondary_color:    this._normalize(raw?.secondary_color,    this.DEFAULTS.secondary_color),
         };
 
         this.texts = {
@@ -332,18 +338,34 @@ class ChatWidget {
     // ---------- Preload from n8n (POST) ----------
     async preloadChatData(){
         try{
+            // Gebruik cache als de sessie niet net is aangemaakt
+            if (!this._sessionJustCreated) {
+                const cached = this.lsGet(this.KEY_CONFIG);
+                if (cached) {
+                    try {
+                        const cfg = JSON.parse(cached);
+                        this.applyRemoteConfig(cfg);
+                        return; // geen netwerk-call
+                    } catch {}
+                }
+            }
+
+            // Anders (nieuwe sessie of geen cache): één call naar de webhook
             const res = await fetch(this.CONFIG_WEBHOOK, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                // EXACTLY send websiteId + sessionId (no userId)
                 body: JSON.stringify({
                     websiteId: this.websiteId || null,
                     sessionId: this.sessionId || null
                 })
             });
             if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
+
             const data = await res.json();
+            // cache config voor deze websiteId
+            try { this.lsSet(this.KEY_CONFIG, JSON.stringify(data)); } catch {}
             this.applyRemoteConfig(data);
+
         } catch (_err){
             // Fallback: defaults
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
@@ -394,35 +416,41 @@ class ChatWidget {
     }
 
     // ---------- Typing engine ----------
-    async _startTypingLoop(){
-        if(this._typingLoopRunning) return;
-        this._typingLoopRunning=true;
+    async _startTypingLoop() {
+        if (this._typingLoopRunning) return;
+        this._typingLoopRunning = true;
 
-        const outContainer=document.getElementById('chatMessages');
-        let liveBubble=this.lastBotMessage;
+        let liveBubble = this.lastBotMessage;
 
-        while(this._typingQueue.length>0){
-            const n=Math.max(1, this.charsPerTick|0);
-            const delay=Math.max(0, this.typeDelayMs|0);
-
-            const chunk=this._typingQueue.slice(0,n);
-            this._typingQueue=this._typingQueue.slice(n);
-
-            if(!liveBubble){
-                liveBubble=this.addMessage('bot','',true); // create bubble lazily
-                this.lastBotMessage=liveBubble;
+        while (this._typingQueue.length > 0) {
+            // wacht tot sendMessage de eerste bubble maakt
+            if (!liveBubble) {
+                await new Promise(r => setTimeout(r, 10));
+                liveBubble = this.lastBotMessage;
+                continue;
             }
 
-            const textEl=liveBubble.querySelector('.chat-widget__message-text');
-            if(textEl){ textEl.textContent += chunk; }
+            const n = Math.max(1, this.charsPerTick | 0);
+            const delay = Math.max(0, this.typeDelayMs | 0);
 
-            if(outContainer) outContainer.scrollTop=outContainer.scrollHeight;
+            const chunk = this._typingQueue.slice(0, n);
+            this._typingQueue = this._typingQueue.slice(n);
 
-            if(delay>0){ await new Promise(r=>setTimeout(r,delay)); }
-            else { await new Promise(requestAnimationFrame); }
+            // raw buffer opbouwen en meteen HTML renderen
+            liveBubble._rawStream = (liveBubble._rawStream || "") + chunk;
+            this._renderStreamInto(liveBubble, liveBubble._rawStream);
+
+            const outContainer = document.getElementById('chatMessages');
+            if (outContainer) outContainer.scrollTop = outContainer.scrollHeight;
+
+            if (delay > 0) {
+                await new Promise(r => setTimeout(r, delay));
+            } else {
+                await new Promise(requestAnimationFrame);
+            }
         }
 
-        this._typingLoopRunning=false;
+        this._typingLoopRunning = false;
     }
 
     async _waitForTypingToDrain(){
@@ -433,12 +461,88 @@ class ChatWidget {
 
     _appendToLiveBubble(bubble, text){
         if(!bubble) return;
-        const textEl=bubble.querySelector('.chat-widget__message-text');
-        if(textEl){
-            textEl.textContent += text;
-            const messages=document.getElementById('chatMessages');
-            if(messages) messages.scrollTop = messages.scrollHeight;
+        bubble._rawStream = (bubble._rawStream || "") + text;
+        this._renderStreamInto(bubble, bubble._rawStream);
+    }
+
+    _renderStreamInto(bubble, rawText) {
+        const textEl = bubble.querySelector('.chat-widget__message-text');
+        if (!textEl) return;
+        textEl.innerHTML = this._renderMarkup(rawText);
+        const messages = document.getElementById('chatMessages');
+        if (messages) messages.scrollTop = messages.scrollHeight;
+    }
+
+    // Eenvoudige renderer: escape → lists → autolink → br
+    _renderMarkup(text) {
+        // 1) HTML escapen (voorkomt XSS)
+        let out = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+
+        // 2) Markdown-achtige lijsten naar echte <ul>/<ol>
+        out = this._convertMarkdownLists(out);
+
+        // 3) Autolink URLs (buiten bestaande <a> tags)
+        out = out.replace(
+            /(^|[\s(])((?:https?:\/\/|www\.)[^\s<)]+)(?![^<]*>)/gi,
+            (m, pre, url) => {
+                const href = url.startsWith('http') ? url : 'https://' + url;
+                return `${pre}<a href="${href}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+            }
+        );
+
+        // 4) Nieuwe regels naar <br> (behalve direct na lijst-sluiters)
+        out = out.replace(/(?<!<\/li>|<\/ul>|<\/ol>)\n/g, "<br>");
+
+        return out;
+    }
+
+    _convertMarkdownLists(text) {
+        const lines = text.split('\n');
+        let out = '';
+        let inUL = false;
+        let inOL = false;
+
+        const flushUL = () => { if (inUL) { out += '</ul>'; inUL = false; } };
+        const flushOL = () => { if (inOL) { out += '</ol>'; inOL = false; } };
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+
+            const ulMatch = /^\s*[-*•]\s+(.+)$/.exec(line);
+            const olMatch = /^\s*\d+\.\s+(.+)$/.exec(line);
+
+            if (ulMatch) {
+                if (inOL) flushOL();
+                if (!inUL) { out += '<ul>'; inUL = true; }
+                out += `<li>${ulMatch[1]}</li>`;
+                continue;
+            }
+            if (olMatch) {
+                if (inUL) flushUL();
+                if (!inOL) { out += '<ol>'; inOL = true; }
+                out += `<li>${olMatch[1]}</li>`;
+                continue;
+            }
+
+            // lege regel sluit lopende lijsten
+            if (!line.trim()) {
+                flushUL(); flushOL();
+                out += '\n';
+                continue;
+            }
+
+            // normale tekstregel
+            flushUL(); flushOL();
+            out += line + '\n';
         }
+
+        flushUL(); flushOL();
+        return out;
     }
 
     // ---------- Messaging (STREAMING NDJSON) ----------
@@ -456,7 +560,7 @@ class ChatWidget {
         // Cancel any in-flight stream
         if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
 
-        // Show typing dots first; bubble is created only after first chunk
+        // Eerst dots; bubble maken we pas bij eerste chunk
         this.showTypingIndicator();
         let liveBubble = null;
 
@@ -539,9 +643,10 @@ class ChatWidget {
 
             await this._waitForTypingToDrain();
 
+            // Hier niets meer converteren; stream-rendering heeft HTML al gezet
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
-            if (textEl && textEl.textContent) {
-                textEl.innerHTML = textEl.textContent.replace(/\n/g, "<br>");
+            if (textEl && liveBubble._rawStream) {
+                textEl.innerHTML = this._renderMarkup(liveBubble._rawStream);
             }
 
             this.saveMessageToSession({
@@ -569,7 +674,7 @@ class ChatWidget {
 
             await this._waitForTypingToDrain();
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
-            if (textEl) textEl.innerHTML = (textEl.textContent || "").replace(/\n/g,"<br>");
+            if (textEl) textEl.innerHTML = this._renderMarkup(liveBubble._rawStream || textEl.textContent || "");
             this.saveMessageToSession({
                 type: 'bot',
                 htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',

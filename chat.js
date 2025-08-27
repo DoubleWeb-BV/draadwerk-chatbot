@@ -20,7 +20,7 @@ class ChatWidget {
         }
 
         // Typing FX – iets langzamer standaard
-        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 88; // was 8
+        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 250; // was 8
         this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 1;  // was 2
 
         // Internal typing state
@@ -420,39 +420,35 @@ class ChatWidget {
         if (this._typingLoopRunning) return;
         this._typingLoopRunning = true;
 
-        const outContainer = document.getElementById('chatMessages');
         let liveBubble = this.lastBotMessage;
 
         while (this._typingQueue.length > 0) {
-            // ⬇️ Read values FRESH each tick
-            const charsPerTick = Number.isFinite(this.charsPerTick) ? this.charsPerTick : 1;
-            const typeDelayMs  = Number.isFinite(this.typeDelayMs)  ? this.typeDelayMs  : 20;
-
-            const chunk = this._typingQueue.slice(0, charsPerTick);
-            this._typingQueue = this._typingQueue.slice(charsPerTick);
-
+            // wacht tot sendMessage de eerste bubble maakt
             if (!liveBubble) {
-                liveBubble = this.addMessage("bot", "", true);
-                this.lastBotMessage = liveBubble;
+                await new Promise(r => setTimeout(r, 10));
+                liveBubble = this.lastBotMessage;
+                continue;
             }
 
-            const textEl = liveBubble.querySelector(".chat-widget__message-text");
-            if (textEl) textEl.textContent += chunk;
+            const n = Math.max(1, this.charsPerTick | 0);
+            const delay = Math.max(0, this.typeDelayMs | 0);
 
+            const chunk = this._typingQueue.slice(0, n);
+            this._typingQueue = this._typingQueue.slice(n);
+
+            // raw buffer opbouwen en meteen HTML renderen
+            liveBubble._rawStream = (liveBubble._rawStream || "") + chunk;
+            this._renderStreamInto(liveBubble, liveBubble._rawStream);
+
+            const outContainer = document.getElementById('chatMessages');
             if (outContainer) outContainer.scrollTop = outContainer.scrollHeight;
 
-            // 👇 wait using the *current* delay
-            if (typeDelayMs > 0) {
-                await new Promise(r => setTimeout(r, typeDelayMs));
-            } else {
-                await new Promise(requestAnimationFrame);
-            }
+            if (delay > 0) { await new Promise(r => setTimeout(r, delay)); }
+            else { await new Promise(requestAnimationFrame); }
         }
 
         this._typingLoopRunning = false;
     }
-
-
 
     async _waitForTypingToDrain(){
         while(this._typingQueue.length>0 || this._typingLoopRunning){

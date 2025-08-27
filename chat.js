@@ -420,35 +420,39 @@ class ChatWidget {
         if (this._typingLoopRunning) return;
         this._typingLoopRunning = true;
 
+        const outContainer = document.getElementById('chatMessages');
         let liveBubble = this.lastBotMessage;
 
         while (this._typingQueue.length > 0) {
-            // wacht tot sendMessage de eerste bubble maakt
+            // ⬇️ Read values FRESH each tick
+            const charsPerTick = Number.isFinite(this.charsPerTick) ? this.charsPerTick : 1;
+            const typeDelayMs  = Number.isFinite(this.typeDelayMs)  ? this.typeDelayMs  : 20;
+
+            const chunk = this._typingQueue.slice(0, charsPerTick);
+            this._typingQueue = this._typingQueue.slice(charsPerTick);
+
             if (!liveBubble) {
-                await new Promise(r => setTimeout(r, 10));
-                liveBubble = this.lastBotMessage;
-                continue;
+                liveBubble = this.addMessage("bot", "", true);
+                this.lastBotMessage = liveBubble;
             }
 
-            const n = Math.max(1, this.charsPerTick | 0);
-            const delay = Math.max(0, this.typeDelayMs | 0);
+            const textEl = liveBubble.querySelector(".chat-widget__message-text");
+            if (textEl) textEl.textContent += chunk;
 
-            const chunk = this._typingQueue.slice(0, n);
-            this._typingQueue = this._typingQueue.slice(n);
-
-            // raw buffer opbouwen en meteen HTML renderen
-            liveBubble._rawStream = (liveBubble._rawStream || "") + chunk;
-            this._renderStreamInto(liveBubble, liveBubble._rawStream);
-
-            const outContainer = document.getElementById('chatMessages');
             if (outContainer) outContainer.scrollTop = outContainer.scrollHeight;
 
-            if (delay > 0) { await new Promise(r => setTimeout(r, delay)); }
-            else { await new Promise(requestAnimationFrame); }
+            // 👇 wait using the *current* delay
+            if (typeDelayMs > 0) {
+                await new Promise(r => setTimeout(r, typeDelayMs));
+            } else {
+                await new Promise(requestAnimationFrame);
+            }
         }
 
         this._typingLoopRunning = false;
     }
+
+
 
     async _waitForTypingToDrain(){
         while(this._typingQueue.length>0 || this._typingLoopRunning){

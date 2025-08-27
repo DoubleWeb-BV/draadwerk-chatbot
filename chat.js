@@ -5,40 +5,42 @@ class ChatWidget {
      * @param {string|null} sessionId
      * @param {string|undefined} userId
      * @param {string} websiteId - REQUIRED for your n8n flow
-     * @param {{typeDelayMs?:number, charsPerTick?:number}} typingOpts
+     * @param {{typeDelayMs?:number, charsPerTick?:number, configWebhookURL?:string}} typingOpts
      */
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
-        // --- Endpoints ---
-        this.webhookURL = webhookURL; // streaming endpoint
-        // ✅ Config/preload endpoint (PAS AAN indien je 'webhook-test' gebruikt)
-        this.configWebhookURL = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526";
+        // Endpoints
+        this.webhookURL = webhookURL; // streaming webhook
+        this.configWebhookURL =
+            typeof typingOpts.configWebhookURL === "string" && typingOpts.configWebhookURL.trim()
+                ? typingOpts.configWebhookURL.trim()
+                : "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526";
 
-        // --- Identity ---
+        // Identity
         this.userId = userId;
         this.websiteId = websiteId;
 
-        // --- Typing config ---
-        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs) ? typingOpts.typeDelayMs : 8;
+        // Typing FX (defaults: 8ms, 2 chars)
+        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 8;
         this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 2;
 
-        // --- Internal typing state ---
+        // Internal typing state
         this._typingQueue = "";
         this._typingLoopRunning = false;
         this._currentAbort = null;
         this._lastFullText = "";
 
-        // --- Keys / storage ---
+        // Storage keys
         this.LS_PREFIX = "dwChat:";
         this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
-        this.KEY_HISTORY    = null; // depends on sessionId
+        this.KEY_HISTORY    = null;
         this.KEY_WELCOME    = null;
         this.KEY_OPEN       = null;
         this.KEY_TOOLTIP    = null;
 
-        // Tab fingerprint + last-seen
-        this.SS_TAB_ID      = this.LS_PREFIX + "tabId";
-        this.KEY_LAST_SEEN  = this.LS_PREFIX + "lastSeen";
-        this.RESET_MS       = 4000;
+        // Tab + last seen
+        this.SS_TAB_ID     = this.LS_PREFIX + "tabId";
+        this.KEY_LAST_SEEN = this.LS_PREFIX + "lastSeen";
+        this.RESET_MS      = 4000;
 
         // State
         this.isOpen = false;
@@ -69,19 +71,16 @@ class ChatWidget {
             secondary_color: "#ff7b61",
         };
 
-        // Cross-tab channel
         this.channel = null;
 
-        // STEP 1: tab fingerprint
+        // 1) tab fingerprint
         this.adoptOrCreateTabId();
-
-        // STEP 2: fresh-start detection
+        // 2) fresh-start detection
         this.maybeResetForNewBrowser();
-
-        // STEP 3: shared sessionId
+        // 3) session id
         this.sessionId = this.loadOrCreateSessionId(sessionId);
 
-        // Per-session keys
+        // per-session keys
         this.KEY_HISTORY = `${this.LS_PREFIX}history:${this.sessionId}`;
         this.KEY_WELCOME = `${this.LS_PREFIX}welcome:${this.sessionId}`;
         this.KEY_OPEN    = `${this.LS_PREFIX}isOpen:${this.sessionId}`;
@@ -92,49 +91,39 @@ class ChatWidget {
     }
 
     // ---------- Storage helpers ----------
-    lsGet(key) { return localStorage.getItem(key); }
-    lsSet(key, val) { localStorage.setItem(key, val); }
-    lsRemove(key) { localStorage.removeItem(key); }
-    ssGet(key) { return sessionStorage.getItem(key); }
-    ssSet(key, val) { sessionStorage.setItem(key, val); }
+    lsGet(k){ return localStorage.getItem(k); }
+    lsSet(k,v){ localStorage.setItem(k,v); }
+    lsRemove(k){ localStorage.removeItem(k); }
+    ssGet(k){ return sessionStorage.getItem(k); }
+    ssSet(k,v){ sessionStorage.setItem(k,v); }
 
     // ---------- Hide/Reveal ----------
-    ensureHidden() {
-        const root = document.getElementById('chat-widget');
-        if (root) {
-            root.setAttribute('data-ready', '0');
-            root.style.visibility = 'hidden';
-            root.style.opacity = '0';
-        }
+    ensureHidden(){
+        const root=document.getElementById('chat-widget');
+        if(root){ root.setAttribute('data-ready','0'); root.style.visibility='hidden'; root.style.opacity='0'; }
     }
-    revealWidget() {
-        const root = document.getElementById('chat-widget');
-        if (root) {
-            root.setAttribute('data-ready', '1');
-            root.style.visibility = 'visible';
-            root.style.opacity = '1';
-        }
+    revealWidget(){
+        const root=document.getElementById('chat-widget');
+        if(root){ root.setAttribute('data-ready','1'); root.style.visibility='visible'; root.style.opacity='1'; }
     }
 
     // ---------- Tab fingerprint & browser-new detection ----------
-    adoptOrCreateTabId() {
-        let tabId = this.ssGet(this.SS_TAB_ID);
-        if (!tabId) {
-            tabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
-            this.ssSet(this.SS_TAB_ID, tabId);
-            this._isBrandNewTab = true;
+    adoptOrCreateTabId(){
+        let tabId=this.ssGet(this.SS_TAB_ID);
+        if(!tabId){
+            tabId='tab-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);
+            this.ssSet(this.SS_TAB_ID,tabId);
+            this._isBrandNewTab=true;
         } else {
-            this._isBrandNewTab = false;
+            this._isBrandNewTab=false;
         }
     }
-
-    maybeResetForNewBrowser() {
-        const lastSeen = parseInt(this.lsGet(this.KEY_LAST_SEEN) || "0", 10);
-        const now = Date.now();
-
-        if (this._isBrandNewTab && (now - lastSeen) > this.RESET_MS) {
-            const sid = this.lsGet(this.KEY_SESSION_ID);
-            if (sid) {
+    maybeResetForNewBrowser(){
+        const lastSeen=parseInt(this.lsGet(this.KEY_LAST_SEEN)||"0",10);
+        const now=Date.now();
+        if(this._isBrandNewTab && (now-lastSeen)>this.RESET_MS){
+            const sid=this.lsGet(this.KEY_SESSION_ID);
+            if(sid){
                 this.lsRemove(`${this.LS_PREFIX}history:${sid}`);
                 this.lsRemove(`${this.LS_PREFIX}welcome:${sid}`);
                 this.lsRemove(`${this.LS_PREFIX}isOpen:${sid}`);
@@ -142,49 +131,34 @@ class ChatWidget {
             }
             this.lsRemove(this.KEY_SESSION_ID);
         }
-
-        this.lsSet(this.KEY_LAST_SEEN, String(now));
+        this.lsSet(this.KEY_LAST_SEEN,String(now));
         this.installHeartbeat();
     }
-
-    installHeartbeat() {
-        document.addEventListener('visibilitychange', () => {
-            this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
-        });
-        window.addEventListener('pagehide', () => {
-            this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
-        });
-        this._heartbeat = setInterval(() => {
-            if (!document.hidden) {
-                this.lsSet(this.KEY_LAST_SEEN, String(Date.now()));
-            }
-        }, 2000);
+    installHeartbeat(){
+        document.addEventListener('visibilitychange',()=>this.lsSet(this.KEY_LAST_SEEN,String(Date.now())));
+        window.addEventListener('pagehide',()=>this.lsSet(this.KEY_LAST_SEEN,String(Date.now())));
+        this._heartbeat=setInterval(()=>{ if(!document.hidden) this.lsSet(this.KEY_LAST_SEEN,String(Date.now())); },2000);
     }
 
     // ---------- Session ID ----------
-    loadOrCreateSessionId(providedSessionId) {
-        let sid = this.lsGet(this.KEY_SESSION_ID);
-        if (!sid) {
-            sid = providedSessionId || this.generateSessionId();
-            this.lsSet(this.KEY_SESSION_ID, sid);
+    loadOrCreateSessionId(provided){
+        let sid=this.lsGet(this.KEY_SESSION_ID);
+        if(!sid){
+            sid=provided || ('session-'+Date.now()+'-'+Math.random().toString(36).substr(2,9));
+            this.lsSet(this.KEY_SESSION_ID,sid);
         }
         return sid;
     }
-    generateSessionId() {
-        return 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    }
 
     // ---------- Init ----------
-    init() {
-        this.ensureHidden(); // keep hidden until config is ready
-
+    init(){
+        this.ensureHidden();
         this.bindEvents();
         this.setupBroadcastChannel();
         this.setupStorageSync();
 
-        // Load remote config and only then show UI/tooltip/restore state
-        this.configReady = this.preloadChatData().catch(() => {});
-        this.configReady.finally(() => {
+        this.configReady=this.preloadChatData().catch(()=>{});
+        this.configReady.finally(()=>{
             this.restoreOpenState();
             this.showTooltip();
             this.startPulseAnimation();
@@ -192,39 +166,36 @@ class ChatWidget {
     }
 
     // ---------- Events ----------
-    bindEvents() {
-        const chatButton = document.getElementById('chatButton');
-        const chatClose = document.getElementById('chatClose');
-        const chatSend = document.getElementById('chatSend');
-        const chatInput = document.getElementById('chatInput');
-        const thumbsUp = document.getElementById('thumbsUp');
-        const thumbsDown = document.getElementById('thumbsDown');
-        const contactBtn = document.getElementById('contactBtn');
-        const chatTooltip = document.getElementById('chatTooltip');
+    bindEvents(){
+        const chatButton=document.getElementById('chatButton');
+        const chatClose=document.getElementById('chatClose');
+        const chatSend=document.getElementById('chatSend');
+        const chatInput=document.getElementById('chatInput');
+        const thumbsUp=document.getElementById('thumbsUp');
+        const thumbsDown=document.getElementById('thumbsDown');
+        const contactBtn=document.getElementById('contactBtn');
+        const chatTooltip=document.getElementById('chatTooltip');
 
-        chatButton?.addEventListener('click', () => this.toggleChat());
-        chatClose?.addEventListener('click', () => this.closeChat());
-        chatSend?.addEventListener('click', () => this.sendMessage());
-        thumbsUp?.addEventListener('click', () => this.handleFeedback(true));
-        thumbsDown?.addEventListener('click', () => this.handleFeedback(false));
-        contactBtn?.addEventListener('click', () => this.handleContact());
+        chatButton?.addEventListener('click',()=>this.toggleChat());
+        chatClose?.addEventListener('click',()=>this.closeChat());
+        chatSend?.addEventListener('click',()=>this.sendMessage());
+        thumbsUp?.addEventListener('click',()=>this.handleFeedback(true));
+        thumbsDown?.addEventListener('click',()=>this.handleFeedback(false));
+        contactBtn?.addEventListener('click',()=>this.handleContact());
 
-        chatInput?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                this.sendMessage();
-            }
+        chatInput?.addEventListener('keydown',(e)=>{
+            if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); this.sendMessage(); }
         });
-        chatInput?.addEventListener('input', (e) => {
-            if (chatSend) chatSend.disabled = e.target.value.trim().length === 0;
+        chatInput?.addEventListener('input',(e)=>{
+            if (chatSend) chatSend.disabled = e.target.value.trim().length===0;
         });
 
-        chatTooltip?.addEventListener('click', async () => {
+        chatTooltip?.addEventListener('click', async()=>{
             await this.toggleChat();
             this.dismissTooltip();
         });
-        chatTooltip?.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
+        chatTooltip?.addEventListener('keydown', async(e)=>{
+            if(e.key==='Enter' || e.key===' '){
                 e.preventDefault();
                 await this.toggleChat();
                 this.dismissTooltip();
@@ -232,329 +203,288 @@ class ChatWidget {
         });
 
         ['click','keydown','scroll','pointerdown'].forEach(evt =>
-            window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN, String(Date.now())), { passive: true })
+            window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN,String(Date.now())), {passive:true})
         );
     }
 
     // ---------- Cross-tab sync ----------
-    setupBroadcastChannel() {
-        if ("BroadcastChannel" in window) {
-            this.channel = new BroadcastChannel("dw-chat");
-            this.channel.onmessage = (evt) => {
-                const msg = evt.data || {};
-                if (msg.type === "openState") {
-                    if (msg.value === true && !this.isOpen) this.openChat();
-                    if (msg.value === false && this.isOpen) this.closeChat();
+    setupBroadcastChannel(){
+        if("BroadcastChannel" in window){
+            this.channel=new BroadcastChannel("dw-chat");
+            this.channel.onmessage=(evt)=>{
+                const msg=evt.data||{};
+                if(msg.type==="openState"){
+                    if(msg.value===true && !this.isOpen) this.openChat();
+                    if(msg.value===false && this.isOpen) this.closeChat();
                 }
-                if (msg.type === "historyChanged") {
-                    this.chatRestored = false;
-                    this.restoreChatHistory();
-                }
-                if (msg.type === "tooltipDismissed") {
-                    this.hideTooltip();
-                }
+                if(msg.type==="historyChanged"){ this.chatRestored=false; this.restoreChatHistory(); }
+                if(msg.type==="tooltipDismissed"){ this.hideTooltip(); }
             };
         }
     }
-    postChannel(payload) {
-        if (this.channel) {
-            try { this.channel.postMessage(payload); } catch {}
-        }
-    }
+    postChannel(payload){ if(this.channel){ try{ this.channel.postMessage(payload); }catch{} } }
 
-    setupStorageSync() {
-        window.addEventListener('storage', async (e) => {
-            if (!e.key) return;
-
-            if (e.key === this.KEY_OPEN) {
-                const shouldBeOpen = this.lsGet(this.KEY_OPEN) === 'true';
-                if (shouldBeOpen && !this.isOpen) await this.openChat();
-                if (!shouldBeOpen && this.isOpen) this.closeChat();
+    setupStorageSync(){
+        window.addEventListener('storage', async (e)=>{
+            if(!e.key) return;
+            if(e.key===this.KEY_OPEN){
+                const shouldBeOpen=this.lsGet(this.KEY_OPEN)==='true';
+                if(shouldBeOpen && !this.isOpen) await this.openChat();
+                if(!shouldBeOpen && this.isOpen) this.closeChat();
                 return;
             }
-            if (e.key === this.KEY_HISTORY) {
-                this.chatRestored = false;
-                this.restoreChatHistory();
-                return;
-            }
-            if (e.key === this.KEY_TOOLTIP) {
-                const dismissed = this.lsGet(this.KEY_TOOLTIP) === 'true';
-                if (dismissed) this.hideTooltip();
-                return;
-            }
+            if(e.key===this.KEY_HISTORY){ this.chatRestored=false; this.restoreChatHistory(); return; }
+            if(e.key===this.KEY_TOOLTIP){ const dismissed=this.lsGet(this.KEY_TOOLTIP)==='true'; if(dismissed) this.hideTooltip(); return; }
         });
     }
 
     // ---------- Tooltip ----------
-    showTooltip() {
-        setTimeout(() => {
-            if (!this.configLoaded) return;
-            const dismissed = this.lsGet(this.KEY_TOOLTIP);
-            if (!this.isOpen && !dismissed) {
+    showTooltip(){
+        setTimeout(()=>{
+            if(!this.configLoaded) return;
+            const dismissed=this.lsGet(this.KEY_TOOLTIP);
+            if(!this.isOpen && !dismissed){
                 document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
             }
         }, 5000);
     }
-    hideTooltip() {
-        document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible');
-    }
-    dismissTooltip() {
-        const el = document.getElementById('chatTooltip');
-        if (el) {
-            el.classList.remove('chat-widget__tooltip--visible');
-            el.style.display = 'none';
-        }
-        this.lsSet(this.KEY_TOOLTIP, 'true');
+    hideTooltip(){ document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible'); }
+    dismissTooltip(){
+        const el=document.getElementById('chatTooltip');
+        if(el){ el.classList.remove('chat-widget__tooltip--visible'); el.style.display='none'; }
+        this.lsSet(this.KEY_TOOLTIP,'true');
         this.postChannel({ type: "tooltipDismissed" });
     }
-    startPulseAnimation() {
-        setTimeout(() => {
-            document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse');
-        }, 10000);
-    }
+    startPulseAnimation(){ setTimeout(()=>{ document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse'); }, 10000); }
 
     // ---------- Theme (CSS vars) ----------
-    applyTheme(primary, secondary) {
-        const root = document.querySelector('#chat-widget') || document.documentElement;
+    applyTheme(primary, secondary){
+        const root=document.querySelector('#chat-widget') || document.documentElement;
         root.style.setProperty('--primary-color', primary || this.DEFAULTS.primary_color);
         root.style.setProperty('--secondary-color', secondary || this.DEFAULTS.secondary_color);
     }
 
     // ---------- Helpers ----------
-    _normalize(value, fallback) {
-        if (Array.isArray(value)) value = value[0];
-        if (typeof value !== "string") return fallback;
-        const trimmed = value.trim();
+    _normalize(value, fallback){
+        if(Array.isArray(value)) value=value[0];
+        if(typeof value!=="string") return fallback;
+        const trimmed=value.trim();
         return trimmed.length ? trimmed : fallback;
     }
 
     // ---------- Apply remote config ----------
-    applyRemoteConfig(raw) {
-        const cfg = {
-            avatar_url: this._normalize(raw?.avatar_url, this.DEFAULTS.avatar_url),
-            chatbot_name: this._normalize(raw?.chatbot_name, this.DEFAULTS.chatbot_name),
-            name_subtitle: this._normalize(raw?.name_subtitle, this.DEFAULTS.name_subtitle),
-            tooltip: this._normalize(raw?.tooltip, this.DEFAULTS.tooltip),
-            opening_message: this._normalize(raw?.opening_message, this.DEFAULTS.opening_message),
-            placeholder_message: this._normalize(raw?.placeholder_message, this.DEFAULTS.placeholder_message),
-            cta_button_text: this._normalize(raw?.cta_button_text, this.DEFAULTS.cta_button_text),
-            cta_text: this._normalize(raw?.cta_text, this.DEFAULTS.cta_text),
-            success_text: this._normalize(raw?.success_text, this.DEFAULTS.success_text),
-            not_useful_text: this._normalize(raw?.not_useful_text, this.DEFAULTS.not_useful_text),
-            primary_color: this._normalize(raw?.primary_color, this.DEFAULTS.primary_color),
-            secondary_color: this._normalize(raw?.secondary_color, this.DEFAULTS.secondary_color),
+    applyRemoteConfig(raw){
+        const cfg={
+            avatar_url:        this._normalize(raw?.avatar_url,        this.DEFAULTS.avatar_url),
+            chatbot_name:      this._normalize(raw?.chatbot_name,      this.DEFAULTS.chatbot_name),
+            name_subtitle:     this._normalize(raw?.name_subtitle,     this.DEFAULTS.name_subtitle),
+            tooltip:           this._normalize(raw?.tooltip,           this.DEFAULTS.tooltip),
+            opening_message:   this._normalize(raw?.opening_message,   this.DEFAULTS.opening_message),
+            placeholder_message:this._normalize(raw?.placeholder_message,this.DEFAULTS.placeholder_message),
+            cta_button_text:   this._normalize(raw?.cta_button_text,   this.DEFAULTS.cta_button_text),
+            cta_text:          this._normalize(raw?.cta_text,          this.DEFAULTS.cta_text),
+            success_text:      this._normalize(raw?.success_text,      this.DEFAULTS.success_text),
+            not_useful_text:   this._normalize(raw?.not_useful_text,   this.DEFAULTS.not_useful_text),
+            primary_color:     this._normalize(raw?.primary_color,     this.DEFAULTS.primary_color),
+            secondary_color:   this._normalize(raw?.secondary_color,   this.DEFAULTS.secondary_color),
         };
 
         this.texts = {
-            success: cfg.success_text,
-            notUseful: cfg.not_useful_text,
-            cta: cfg.cta_text,
+            success:  cfg.success_text,
+            notUseful:cfg.not_useful_text,
+            cta:      cfg.cta_text,
         };
         this.chatConfig = cfg;
 
         // Apply colors
         this.applyTheme(cfg.primary_color, cfg.secondary_color);
 
-        const $ = (sel) => document.querySelector(sel);
+        const $ = (sel)=>document.querySelector(sel);
 
-        // Avatars
-        const avatar1 = $("#js-profile-image");
-        const avatar2 = $("#js-profile-image-2");
-        if (cfg.avatar_url) {
-            if (avatar1) avatar1.src = cfg.avatar_url;
-            if (avatar2) avatar2.src = cfg.avatar_url;
+        const avatar1=$("#js-profile-image");
+        const avatar2=$("#js-profile-image-2");
+        if(cfg.avatar_url){
+            if(avatar1) avatar1.src=cfg.avatar_url;
+            if(avatar2) avatar2.src=cfg.avatar_url;
         }
 
-        // Header
-        const headerTitle = $(".chat-widget__header-title");
-        if (headerTitle) headerTitle.textContent = cfg.chatbot_name;
+        const headerTitle=$(".chat-widget__header-title");
+        if(headerTitle) headerTitle.textContent=cfg.chatbot_name;
 
-        const headerSubtitle = $(".chat-widget__header-subtitle");
-        if (headerSubtitle) headerSubtitle.textContent = `Online • ${cfg.name_subtitle}`;
+        const headerSubtitle=$(".chat-widget__header-subtitle");
+        if(headerSubtitle) headerSubtitle.textContent=`Online • ${cfg.name_subtitle}`;
 
-        // Tooltip text
-        const tooltipEl = $("#chatTooltip");
-        if (tooltipEl) {
-            tooltipEl.textContent = cfg.tooltip;
-            tooltipEl.setAttribute("aria-label", "Open chat");
-        }
+        const tooltipEl=$("#chatTooltip");
+        if(tooltipEl){ tooltipEl.textContent=cfg.tooltip; tooltipEl.setAttribute("aria-label","Open chat"); }
 
-        // CTA label
-        const contactBtn = $("#contactBtn");
-        if (contactBtn) contactBtn.textContent = cfg.cta_button_text;
+        const contactBtn=$("#contactBtn");
+        if(contactBtn) contactBtn.textContent=cfg.cta_button_text;
 
-        // Placeholder
-        const input = $("#chatInput");
-        if (input) input.setAttribute("placeholder", cfg.placeholder_message);
+        const input=$("#chatInput");
+        if(input) input.setAttribute("placeholder", cfg.placeholder_message);
 
-        // Mark loaded and reveal
-        this.configLoaded = true;
+        this.configLoaded=true;
         this.revealWidget();
 
-        // Initial welcome (only once and only if no history)
-        const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
-        const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
-        if (!alreadyWelcomed && !hasHistory && cfg.opening_message) {
-            const html = cfg.opening_message.replace(/\n/g, "<br>");
+        const alreadyWelcomed=this.lsGet(this.KEY_WELCOME)==="true";
+        const hasHistory=(this.lsGet(this.KEY_HISTORY)||"[]")!=="[]";
+        if(!alreadyWelcomed && !hasHistory && cfg.opening_message){
+            const html = cfg.opening_message.replace(/\n/g,"<br>");
             this.addMessage("bot", html);
-            this.lsSet(this.KEY_WELCOME, "true");
+            this.lsSet(this.KEY_WELCOME,"true");
         }
     }
 
     // ---------- Preload from n8n (POST) ----------
-    async preloadChatData() {
-        try {
-            // Stuur websiteId + sessionId (géén userId)
+    async preloadChatData(){
+        try{
             const res = await fetch(this.configWebhookURL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    websiteId: this.websiteId || null,
-                    sessionId: this.sessionId || null
+                    websiteId: this.websiteId || null,   // <— REQUIRED
+                    sessionId: this.sessionId || null    // <— REQUIRED
+                    // (no userId here)
                 })
             });
-            if (!res.ok) throw new Error(`Webhook error: ${res.status}`);
-
+            if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
             const data = await res.json();
             this.applyRemoteConfig(data);
-        } catch (_err) {
-            // Fallback: defaults
+        } catch (_err){
+            // Fallback: apply defaults and reveal
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
             this.configLoaded = true;
             this.revealWidget();
 
-            const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
-            const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
-            if (!alreadyWelcomed && !hasHistory) {
+            const alreadyWelcomed=this.lsGet(this.KEY_WELCOME)==="true";
+            const hasHistory=(this.lsGet(this.KEY_HISTORY)||"[]")!=="[]";
+            if(!alreadyWelcomed && !hasHistory){
                 this.addMessage('bot', this.DEFAULTS.opening_message);
-                this.lsSet(this.KEY_WELCOME, 'true');
+                this.lsSet(this.KEY_WELCOME,'true');
             }
         }
     }
 
     // ---------- Open / Close ----------
-    async toggleChat() {
-        return this.isOpen ? this.closeChat() : this.openChat();
-    }
+    async toggleChat(){ return this.isOpen ? this.closeChat() : this.openChat(); }
 
-    async openChat() {
-        // Wait until config is ready (no flash of default texts)
-        if (!this.configLoaded && this.configReady) {
-            await this.configReady;
-        }
-
-        const container = document.getElementById('chatContainer');
+    async openChat(){
+        if(!this.configLoaded && this.configReady){ await this.configReady; }
+        const container=document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
 
-        this.lsSet(this.KEY_OPEN, 'true');
-        this.postChannel({ type: "openState", value: true });
+        this.lsSet(this.KEY_OPEN,'true');
+        this.postChannel({ type:"openState", value:true });
 
         this.hideTooltip();
         this.restoreChatHistory();
 
-        setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
+        setTimeout(()=> document.getElementById('chatInput')?.focus(), 300);
     }
 
-    closeChat() {
+    closeChat(){
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
 
-        this.lsSet(this.KEY_OPEN, 'false');
-        this.postChannel({ type: "openState", value: false });
+        this.lsSet(this.KEY_OPEN,'false');
+        this.postChannel({ type:"openState", value:false });
     }
 
-    // restore open state after config load
-    restoreOpenState() {
-        const wasOpen = this.lsGet(this.KEY_OPEN);
-        if (wasOpen === 'true') {
-            if (this.configReady) {
-                this.configReady.then(() => this.openChat());
-            } else {
-                this.openChat();
-            }
+    restoreOpenState(){
+        const wasOpen=this.lsGet(this.KEY_OPEN);
+        if(wasOpen==='true'){
+            if(this.configReady){ this.configReady.then(()=>this.openChat()); }
+            else { this.openChat(); }
         }
     }
 
     // ---------- Typing engine ----------
-    async _startTypingLoop() {
-        if (this._typingLoopRunning) return;
-        this._typingLoopRunning = true;
+    async _startTypingLoop(){
+        if(this._typingLoopRunning) return;
+        this._typingLoopRunning=true;
 
-        const outContainer = document.getElementById('chatMessages');
-        let liveBubble = this.lastBotMessage;
+        const outContainer=document.getElementById('chatMessages');
+        let liveBubble=this.lastBotMessage;
 
-        while (this._typingQueue.length > 0) {
-            const n = Math.max(1, this.charsPerTick | 0);
-            const delay = Math.max(0, this.typeDelayMs | 0);
+        while(this._typingQueue.length>0){
+            const n=Math.max(1, this.charsPerTick|0);
+            const delay=Math.max(0, this.typeDelayMs|0);
 
-            const chunk = this._typingQueue.slice(0, n);
-            this._typingQueue = this._typingQueue.slice(n);
+            const chunk=this._typingQueue.slice(0,n);
+            this._typingQueue=this._typingQueue.slice(n);
 
-            if (!liveBubble) {
-                liveBubble = this.addMessage('bot', '', true /* avoid double-save during stream */);
-                this.lastBotMessage = liveBubble;
+            if(!liveBubble){
+                liveBubble=this.addMessage('bot','',true); // create bubble lazily
+                this.lastBotMessage=liveBubble;
             }
 
-            const textEl = liveBubble.querySelector('.chat-widget__message-text');
-            if (textEl) {
-                textEl.textContent += chunk; // plain text while streaming
-            }
+            const textEl=liveBubble.querySelector('.chat-widget__message-text');
+            if(textEl){ textEl.textContent += chunk; }
 
-            if (outContainer) outContainer.scrollTop = outContainer.scrollHeight;
+            if(outContainer) outContainer.scrollTop=outContainer.scrollHeight;
 
-            if (delay > 0) {
-                await new Promise(r => setTimeout(r, delay));
-            } else {
-                await new Promise(requestAnimationFrame);
-            }
+            if(delay>0){ await new Promise(r=>setTimeout(r,delay)); }
+            else { await new Promise(requestAnimationFrame); }
         }
 
-        this._typingLoopRunning = false;
+        this._typingLoopRunning=false;
+    }
+
+    async _waitForTypingToDrain(){
+        while(this._typingQueue.length>0 || this._typingLoopRunning){
+            await new Promise(r => setTimeout(r, 10));
+        }
+    }
+
+    _appendToLiveBubble(bubble, text){
+        if(!bubble) return;
+        const textEl=bubble.querySelector('.chat-widget__message-text');
+        if(textEl){
+            textEl.textContent += text;
+            const messages=document.getElementById('chatMessages');
+            if(messages) messages.scrollTop = messages.scrollHeight;
+        }
     }
 
     // ---------- Messaging (STREAMING NDJSON) ----------
-    async sendMessage() {
-        const input = document.getElementById('chatInput');
-        const message = input?.value.trim();
-        if (!message) return;
+    async sendMessage(){
+        const input=document.getElementById('chatInput');
+        const message=input?.value.trim();
+        if(!message) return;
 
-        // Save user message
+        // Save user message immediately
         this.addMessage('user', message);
-        if (input) input.value = '';
-        const sendBtn = document.getElementById('chatSend');
-        if (sendBtn) sendBtn.disabled = true;
+        if(input) input.value='';
+        const sendBtn=document.getElementById('chatSend');
+        if(sendBtn) sendBtn.disabled=true;
 
-        // Abort vorige stream
-        if (this._currentAbort) {
-            try { this._currentAbort.abort(); } catch {}
-            this._currentAbort = null;
-        }
+        // Cancel any in-flight stream
+        if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
 
+        // Show only typing dots first
         this.showTypingIndicator();
 
-        // Prepare live bubble
-        const liveBubble = this.addMessage('bot', '', true /* avoid saving partial */);
-        this.lastBotMessage = liveBubble;
+        // We will create the bot bubble only after first chunk arrives:
+        let liveBubble = null;
 
         const ac = new AbortController();
         this._currentAbort = ac;
-
         this._lastFullText = "";
 
-        try {
+        try{
             const res = await fetch(this.webhookURL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    message,
+                    message,                  // user message
                     sessionId: this.sessionId,
                     websiteId: this.websiteId
                 }),
                 signal: ac.signal
             });
 
-            if (!res.ok || !res.body) {
+            if(!res.ok || !res.body){
                 throw new Error(`Netwerkfout of geen stream body (status ${res.status})`);
             }
 
@@ -562,10 +492,8 @@ class ChatWidget {
             const decoder = new TextDecoder();
             let buffer = "";
 
-            // We render zelf typed text; dots uit
-            this.hideTypingIndicator();
-
-            while (true) {
+            // Stream loop
+            while(true){
                 const { done, value } = await reader.read();
                 if (done) break;
 
@@ -581,21 +509,35 @@ class ChatWidget {
                     try {
                         const obj = JSON.parse(trimmed);
                         if (obj.type === "item" && obj.content) {
+
+                            // First chunk: hide dots & create the live bubble now
+                            if (!liveBubble) {
+                                this.hideTypingIndicator();
+                                liveBubble = this.addMessage('bot', '', true); // avoid saving partial
+                                this.lastBotMessage = liveBubble;
+                            }
+
                             this._typingQueue += obj.content;
                             this._lastFullText += obj.content;
                             this._startTypingLoop();
                         }
                     } catch (e) {
-                        // ongeldige rule → negeren
+                        // ignore malformed
                         console.warn("Kon NDJSON niet parsen:", line, e);
                     }
                 }
             }
 
+            // Flush last partial line if any
             if (buffer.trim()) {
                 try {
                     const lastObj = JSON.parse(buffer);
                     if (lastObj.type === "item" && lastObj.content) {
+                        if (!liveBubble) {
+                            this.hideTypingIndicator();
+                            liveBubble = this.addMessage('bot','',true);
+                            this.lastBotMessage = liveBubble;
+                        }
                         this._typingQueue += lastObj.content;
                         this._lastFullText += lastObj.content;
                         this._startTypingLoop();
@@ -603,16 +545,22 @@ class ChatWidget {
                 } catch {}
             }
 
-            // wachten tot typing klaar is
+            // If stream returned nothing, at least hide typing and show a fallback
+            if (!liveBubble) {
+                this.hideTypingIndicator();
+                liveBubble = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
+            }
+
+            // Wait for typing to finish
             await this._waitForTypingToDrain();
 
-            // plain → HTML (respect \n)
+            // Convert textContent to HTML (respect newlines)
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
             if (textEl && textEl.textContent) {
                 textEl.innerHTML = textEl.textContent.replace(/\n/g, "<br>");
             }
 
-            // Persist final bot msg
+            // Save final bot message
             this.saveMessageToSession({
                 type: 'bot',
                 htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
@@ -625,7 +573,12 @@ class ChatWidget {
             document.getElementById('thumbsDown')?.removeAttribute('disabled');
 
         } catch (err) {
-            this.hideTypingIndicator();
+            // If we never created the bubble, create it now
+            if (!liveBubble) {
+                this.hideTypingIndicator();
+                liveBubble = this.addMessage('bot', '', true);
+            }
+
             if (err?.name === "AbortError") {
                 this._appendToLiveBubble(liveBubble, "\n\n⏹️ Verzoek afgebroken.");
             } else {
@@ -635,34 +588,20 @@ class ChatWidget {
 
             await this._waitForTypingToDrain();
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
-            if (textEl) textEl.innerHTML = (textEl.textContent || "").replace(/\n/g, "<br>");
+            if (textEl) textEl.innerHTML = (textEl.textContent || "").replace(/\n/g,"<br>");
             this.saveMessageToSession({
                 type: 'bot',
                 htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
                 timestamp: new Date().toISOString()
             });
+
         } finally {
-            if (sendBtn) sendBtn.disabled = false;
+            if(sendBtn) sendBtn.disabled=false;
             this._currentAbort = null;
         }
     }
 
-    _appendToLiveBubble(bubble, text) {
-        if (!bubble) return;
-        const textEl = bubble.querySelector('.chat-widget__message-text');
-        if (textEl) {
-            textEl.textContent += text;
-            const messages = document.getElementById('chatMessages');
-            if (messages) messages.scrollTop = messages.scrollHeight;
-        }
-    }
-
-    async _waitForTypingToDrain() {
-        while (this._typingQueue.length > 0 || this._typingLoopRunning) {
-            await new Promise(r => setTimeout(r, 10));
-        }
-    }
-
+    // ---------- UI helpers ----------
     addMessage(type, htmlText, isRestoring = false) {
         const msg = document.createElement('div');
         msg.className = `chat-widget__message chat-widget__message--${type}`;
@@ -694,30 +633,30 @@ class ChatWidget {
         return msg;
     }
 
-    showTypingIndicator() {
-        const indicator = document.createElement('div');
-        indicator.id = 'typingIndicator';
-        indicator.className = 'chat-widget__typing chat-widget__typing--visible';
-        indicator.innerHTML = `
+    showTypingIndicator(){
+        const indicator=document.createElement('div');
+        indicator.id='typingIndicator';
+        indicator.className='chat-widget__typing chat-widget__typing--visible';
+        indicator.innerHTML=`
       <div class="chat-widget__typing-dot"></div>
       <div class="chat-widget__typing-dot"></div>
       <div class="chat-widget__typing-dot"></div>
     `;
-        const messages = document.getElementById('chatMessages');
+        const messages=document.getElementById('chatMessages');
         messages?.appendChild(indicator);
-        if (messages) messages.scrollTop = messages.scrollHeight;
+        if(messages) messages.scrollTop = messages.scrollHeight;
     }
 
-    hideTypingIndicator() {
+    hideTypingIndicator(){
         document.getElementById('typingIndicator')?.remove();
     }
 
-    handleFeedback(isUseful) {
-        const thumbsUp = document.getElementById('thumbsUp');
-        const thumbsDown = document.getElementById('thumbsDown');
+    handleFeedback(isUseful){
+        const thumbsUp=document.getElementById('thumbsUp');
+        const thumbsDown=document.getElementById('thumbsDown');
 
         if (thumbsUp?.disabled || thumbsDown?.disabled) {
-            this.addMessage('bot', 'Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
+            this.addMessage('bot','Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
             return;
         }
 
@@ -737,37 +676,37 @@ class ChatWidget {
 
         const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
 
+        // Optional: many streaming backends ignore this
         fetch(this.webhookURL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                type: 'feedback',
-                feedback: feedbackLabel,
-                sessionId: this.sessionId,
-                websiteId: this.websiteId,
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                type:'feedback',
+                feedback:feedbackLabel,
+                sessionId:this.sessionId,
+                websiteId:this.websiteId,
                 ...(this.userId && { userId: this.userId })
             })
-        }).catch(() => {});
+        }).catch(()=>{});
     }
 
-    handleContact() {
-        const html = (this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g, "<br>");
-        this.addMessage('bot', html);
+    handleContact(){
+        const html=(this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g,"<br>");
+        this.addMessage('bot',html);
     }
 
     // ---------- Persistence ----------
-    saveMessageToSession(message) {
+    saveMessageToSession(message){
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
         history.push(message);
         this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
-
-        this.postChannel({ type: "historyChanged" });
-        this.lsSet(this.KEY_HISTORY, JSON.stringify(history)); // trigger storage event
+        this.postChannel({ type:"historyChanged" });
+        // write again to ensure 'storage' event fires in other tabs (Safari quirk)
+        this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
     }
 
-    restoreChatHistory() {
+    restoreChatHistory(){
         if (this.chatRestored) return;
-
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
 
         const messagesEl = document.getElementById('chatMessages');
@@ -780,19 +719,20 @@ class ChatWidget {
         this.chatRestored = true;
     }
 
-    clearChatHistory() {
+    clearChatHistory(){
         this.lsRemove(this.KEY_HISTORY);
         this.lsRemove(this.KEY_WELCOME);
         this.lsRemove(this.KEY_TOOLTIP);
         this.lsRemove(this.KEY_OPEN);
-        this.chatRestored = false;
+        this.chatRestored=false;
     }
 
-    maybeAddWelcomeMessage() {
-        const alreadyWelcomed = this.lsGet(this.KEY_WELCOME);
-        if (!alreadyWelcomed) {
+    // Legacy helper (kept)
+    maybeAddWelcomeMessage(){
+        const alreadyWelcomed=this.lsGet(this.KEY_WELCOME);
+        if(!alreadyWelcomed){
             this.addMessage('bot', this.DEFAULTS.opening_message);
-            this.lsSet(this.KEY_WELCOME, 'true');
+            this.lsSet(this.KEY_WELCOME,'true');
         }
     }
 }

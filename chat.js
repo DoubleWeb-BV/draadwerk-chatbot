@@ -400,7 +400,7 @@ class ChatWidget {
     async preloadChatData() {
         try {
             // keep your existing config webhook
-            const res = await fetch("https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526", {
+            const res = await fetch("https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

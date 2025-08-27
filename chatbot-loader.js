@@ -47,7 +47,7 @@
 
                 // User ID uitlezen uit data attribuut
                 const userId = currentScript.dataset.userId || null;
-                const webhookURL = 'https://workflows.draadwerk.nl/webhook/draadwerk-chatbot-v2';
+                const webhookURL = 'https://workflows.draadwerk.nl/webhook/6d7815bf-da68-4e19-81c2-0575a091afba';
 
                 // Initialiseer ChatWidget als beschikbaar
                 if (typeof ChatWidget !== 'undefined') {

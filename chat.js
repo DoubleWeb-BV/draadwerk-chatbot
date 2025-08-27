@@ -1,8 +1,8 @@
 // chat.js
-// Tip (console):
-//   - Gebruik dwChat.setSpeed(delayMs, charsPerTick)
-//   - Of stel apart in: dwChat.delay = 40; dwChat.charsPerTick = 3;
-//   - Pauze/ga door/skip: dwChat.pause(); dwChat.resume(); dwChat.skip();
+// Simplified: no typing speed controls, no delays.
+// - Shows content immediately as it streams in.
+// - Removes loading icon as soon as the first content arrives.
+// - Console.logs every word as it comes in.
 
 class ChatWidget {
     /**
@@ -10,7 +10,7 @@ class ChatWidget {
      * @param {string|null} sessionId
      * @param {string|undefined} userId
      * @param {string} websiteId - REQUIRED for your n8n flow
-     * @param {{typeDelayMs?:number, charsPerTick?:number}} typingOpts
+     * @param {{}} typingOpts - (ignored, kept for compatibility)
      */
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
         // Endpoints
@@ -24,16 +24,9 @@ class ChatWidget {
             console.warn("[ChatWidget] websiteId is leeg; config webhook krijgt null.");
         }
 
-        // Typing FX – iets langzamer standaard (live aanpasbaar)
-        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 250;
-        this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 1;
-
-        // Internal typing state
-        this._typingQueue = "";
-        this._typingLoopRunning = false;
+        // Internal state
         this._currentAbort = null;
         this._lastFullText = "";
-        this._typeTimer = null; // <— nieuwe timer-based engine
 
         // Storage keys
         this.LS_PREFIX = "dwChat:";
@@ -96,9 +89,6 @@ class ChatWidget {
 
         // Init
         this.init();
-
-        // Console controls (globale alias: dwChat)
-        this._exposeConsoleControls('dwChat');
     }
 
     // ---------- Storage helpers ----------
@@ -282,6 +272,11 @@ class ChatWidget {
         return trimmed.length ? trimmed : fallback;
     }
 
+    _logIncomingWords(text){
+        const words = String(text).match(/\S+/g) || [];
+        for(const w of words){ console.log("[ChatWidget] word:", w); }
+    }
+
     // ---------- Apply remote config ----------
     applyRemoteConfig(raw){
         const cfg={
@@ -424,86 +419,247 @@ class ChatWidget {
         }
     }
 
-    // ---------- Typing speed controls (public) ----------
-    setTypingSpeed({ typeDelayMs, charsPerTick } = {}) {
-        const clampInt = (v, min, max, fallback) => {
-            const n = Number(v);
-            return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.floor(n))) : fallback;
-        };
-        if (typeDelayMs !== undefined)  this.typeDelayMs  = clampInt(typeDelayMs, 0, 2000, this.typeDelayMs);
-        if (charsPerTick !== undefined) this.charsPerTick = clampInt(charsPerTick, 1, 100,  this.charsPerTick);
-    }
+    // ---------- Messaging (STREAMING NDJSON; immediate render) ----------
+    async sendMessage(){
+        const input=document.getElementById('chatInput');
+        const message=input?.value.trim();
+        if(!message) return;
 
-    _exposeConsoleControls(alias = 'dwChat') {
-        const self = this;
-        const g = (window[alias] = window[alias] || {});
+        // Save user message
+        this.addMessage('user', message);
+        if(input) input.value='';
+        const sendBtn=document.getElementById('chatSend');
+        if(sendBtn) sendBtn.disabled=true;
 
-        Object.defineProperty(g, 'delay', {
-            get(){ return self.typeDelayMs; },
-            set(v){ self.setTypingSpeed({ typeDelayMs: v }); }
-        });
-        Object.defineProperty(g, 'charsPerTick', {
-            get(){ return self.charsPerTick; },
-            set(v){ self.setTypingSpeed({ charsPerTick: v }); }
-        });
+        // Cancel any in-flight stream
+        if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
 
-        g.setSpeed = (delay, cpt) => self.setTypingSpeed({ typeDelayMs: delay, charsPerTick: cpt });
-        g.getSpeed = () => ({ delay: self.typeDelayMs, charsPerTick: self.charsPerTick });
-        g.pause  = () => self._stopTypingLoop();
-        g.resume = () => self._startTypingLoop();
-        g.skip   = () => { self._typingQueue = ""; self._stopTypingLoop(); };
-    }
+        // Show loading dots before response
+        this.showTypingIndicator();
+        let liveBubble = null;
+        let firstChunkArrived = false;
 
-    // ---------- Typing engine (timer-based, console-live adjustable) ----------
-    _startTypingLoop() {
-        if (this._typingLoopRunning) return;
-        this._typingLoopRunning = true;
+        const ac = new AbortController();
+        this._currentAbort = ac;
+        this._lastFullText = "";
 
-        const tick = () => {
-            // Niets meer te typen?
-            if (this._typingQueue.length === 0) {
-                this._typingLoopRunning = false;
-                this._typeTimer = null;
-                return;
+        try{
+            const res = await fetch(this.webhookURL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message,
+                    sessionId: this.sessionId,
+                    websiteId: this.websiteId
+                }),
+                signal: ac.signal
+            });
+
+            if(!res.ok || !res.body){
+                throw new Error(`Netwerkfout of geen stream body (status ${res.status})`);
             }
 
-            // Lees actuele waardes (live aanpasbaar via console)
-            const n = Math.max(1, Math.floor(this.charsPerTick));
-            const delay = Math.max(0, Math.floor(this.typeDelayMs));
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
 
-            // Wacht tot er een bot-bubble is aangemaakt door sendMessage()
-            if (!this.lastBotMessage) {
-                this._typeTimer = setTimeout(tick, Math.max(0, delay));
-                return;
+            while(true){
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                const chunkText = decoder.decode(value, { stream: true });
+                buffer += chunkText;
+
+                const lines = buffer.split("\n");
+                buffer = lines.pop() ?? "";
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    try {
+                        const obj = JSON.parse(trimmed);
+                        if (obj.type === "item" && obj.content) {
+                            // First content: remove loader immediately, create bubble
+                            if (!firstChunkArrived) {
+                                this.hideTypingIndicator(); // remove immediately on first text
+                                liveBubble = this.addMessage('bot', '', true);
+                                this.lastBotMessage = liveBubble;
+                                firstChunkArrived = true;
+                            }
+
+                            // Log words for this chunk
+                            this._logIncomingWords(obj.content);
+
+                            // Append content immediately (no delay)
+                            this._appendToLiveBubble(this.lastBotMessage, obj.content);
+                            this._lastFullText += obj.content;
+                        }
+                    } catch (e) {
+                        console.warn("Kon NDJSON niet parsen:", line, e);
+                    }
+                }
             }
 
-            // Neem n chars uit buffer
-            const chunk = this._typingQueue.slice(0, n);
-            this._typingQueue = this._typingQueue.slice(n);
+            // Flush last partial line if any
+            if (buffer.trim()) {
+                try {
+                    const lastObj = JSON.parse(buffer);
+                    if (lastObj.type === "item" && lastObj.content) {
+                        if (!firstChunkArrived) {
+                            this.hideTypingIndicator();
+                            liveBubble = this.addMessage('bot','',true);
+                            this.lastBotMessage = liveBubble;
+                            firstChunkArrived = true;
+                        }
+                        this._logIncomingWords(lastObj.content);
+                        this._appendToLiveBubble(this.lastBotMessage, lastObj.content);
+                        this._lastFullText += lastObj.content;
+                    }
+                } catch {}
+            }
 
-            // Append naar bubble
-            this._appendToLiveBubble(this.lastBotMessage, chunk);
+            if (!firstChunkArrived) {
+                // No content received
+                this.hideTypingIndicator();
+                liveBubble = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
+                this.lastBotMessage = liveBubble;
+            }
 
-            // Volgende tick
-            this._typeTimer = setTimeout(tick, delay);
-        };
+            // Final sanitize/markup pass
+            if (liveBubble) {
+                const textEl = liveBubble.querySelector('.chat-widget__message-text');
+                if (textEl) textEl.innerHTML = this._renderMarkup(liveBubble._rawStream || textEl.textContent || "");
+                this.saveMessageToSession({
+                    type: 'bot',
+                    htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
+                    timestamp: new Date().toISOString()
+                });
+                document.getElementById('thumbsUp')?.removeAttribute('disabled');
+                document.getElementById('thumbsDown')?.removeAttribute('disabled');
+            }
 
-        // start direct
-        tick();
-    }
+        } catch (err) {
+            if (!liveBubble) {
+                this.hideTypingIndicator();
+                liveBubble = this.addMessage('bot', '', true);
+                this.lastBotMessage = liveBubble;
+            }
 
-    _stopTypingLoop() {
-        if (this._typeTimer) clearTimeout(this._typeTimer);
-        this._typeTimer = null;
-        this._typingLoopRunning = false;
-    }
+            if (err?.name === "AbortError") {
+                this._appendToLiveBubble(liveBubble, "\n\n⏹️ Verzoek afgebroken.");
+            } else {
+                console.error(err);
+                this._appendToLiveBubble(liveBubble, "Er ging iets mis.");
+            }
 
-    async _waitForTypingToDrain(){
-        while(this._typingQueue.length>0 || this._typingLoopRunning){
-            await new Promise(r => setTimeout(r, 10));
+            const textEl = liveBubble.querySelector('.chat-widget__message-text');
+            if (textEl) textEl.innerHTML = this._renderMarkup(liveBubble._rawStream || textEl.textContent || "");
+            this.saveMessageToSession({
+                type: 'bot',
+                htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
+                timestamp: new Date().toISOString()
+            });
+
+        } finally {
+            if(sendBtn) sendBtn.disabled=false;
+            this._currentAbort = null;
         }
     }
 
+    // ---------- UI helpers ----------
+    addMessage(type, htmlText, isRestoring = false) {
+        const msg = document.createElement('div');
+        msg.className = `chat-widget__message chat-widget__message--${type}`;
+
+        const timestamp = new Date();
+        const formattedTime = timestamp.toLocaleString('nl-NL', {
+            day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
+
+        msg.innerHTML = `
+      <div class="chat-widget__message-text">${htmlText}</div>
+      <div class="chat-widget__timestamp">${formattedTime}</div>
+    `;
+
+        const container = document.getElementById('chatMessages');
+        container?.appendChild(msg);
+        if (container) container.scrollTop = container.scrollHeight;
+
+        if (type === 'bot') {
+            this.lastBotMessage = msg;
+            document.getElementById('thumbsUp')?.removeAttribute('disabled');
+            document.getElementById('thumbsDown')?.removeAttribute('disabled');
+        }
+
+        if (!isRestoring) {
+            this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
+        }
+
+        return msg;
+    }
+
+    showTypingIndicator(){
+        const indicator=document.createElement('div');
+        indicator.id='typingIndicator';
+        indicator.className='chat-widget__typing chat-widget__typing--visible';
+        indicator.innerHTML=`
+      <div class="chat-widget__typing-dot"></div>
+      <div class="chat-widget__typing-dot"></div>
+      <div class="chat-widget__typing-dot"></div>
+    `;
+        const messages=document.getElementById('chatMessages');
+        messages?.appendChild(indicator);
+        if(messages) messages.scrollTop = messages.scrollHeight;
+    }
+
+    hideTypingIndicator(){
+        document.getElementById('typingIndicator')?.remove();
+    }
+
+    handleFeedback(isUseful){
+        const thumbsUp=document.getElementById('thumbsUp');
+        const thumbsDown=document.getElementById('thumbsDown');
+
+        if (thumbsUp?.disabled || thumbsDown?.disabled) {
+            this.addMessage('bot','Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
+            return;
+        }
+
+        thumbsUp.classList.remove('chat-widget__feedback-btn--active');
+        thumbsDown.classList.remove('chat-widget__feedback-btn--active');
+
+        if (isUseful) {
+            thumbsUp.classList.add('chat-widget__feedback-btn--active');
+            this.addMessage('bot', this?.texts?.success || this.DEFAULTS.success_text);
+        } else {
+            thumbsDown.classList.add('chat-widget__feedback-btn--active');
+            this.addMessage('bot', this?.texts?.notUseful || this.DEFAULTS.not_useful_text);
+        }
+
+        thumbsUp.setAttribute('disabled', true);
+        thumbsDown.setAttribute('disabled', true);
+
+        const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
+
+        fetch(this.webhookURL, {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                type:'feedback',
+                feedback:feedbackLabel,
+                sessionId:this.sessionId,
+                websiteId:this.websiteId,
+                ...(this.userId && { userId: this.userId })
+            })
+        }).catch(()=>{});
+    }
+
+    handleContact(){
+        const html=(this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g,"<br>");
+        this.addMessage('bot',html);
+    }
+
+    // ---------- Rendering helpers ----------
     _appendToLiveBubble(bubble, text){
         if(!bubble) return;
         bubble._rawStream = (bubble._rawStream || "") + text;
@@ -680,243 +836,6 @@ class ChatWidget {
 
         walk(doc.body);
         return doc.body.innerHTML;
-    }
-
-    // ---------- Messaging (STREAMING NDJSON) ----------
-    async sendMessage(){
-        const input=document.getElementById('chatInput');
-        const message=input?.value.trim();
-        if(!message) return;
-
-        // Save user message
-        this.addMessage('user', message);
-        if(input) input.value='';
-        const sendBtn=document.getElementById('chatSend');
-        if(sendBtn) sendBtn.disabled=true;
-
-        // Cancel any in-flight stream
-        if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
-
-        // Eerst dots; bubble maken we pas bij eerste chunk
-        this.showTypingIndicator();
-        let liveBubble = null;
-
-        const ac = new AbortController();
-        this._currentAbort = ac;
-        this._lastFullText = "";
-
-        try{
-            const res = await fetch(this.webhookURL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message,
-                    sessionId: this.sessionId,
-                    websiteId: this.websiteId
-                }),
-                signal: ac.signal
-            });
-
-            if(!res.ok || !res.body){
-                throw new Error(`Netwerkfout of geen stream body (status ${res.status})`);
-            }
-
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
-
-            while(true){
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunkText = decoder.decode(value, { stream: true });
-                buffer += chunkText;
-
-                const lines = buffer.split("\n");
-                buffer = lines.pop() ?? "";
-
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed) continue;
-                    try {
-                        const obj = JSON.parse(trimmed);
-                        if (obj.type === "item" && obj.content) {
-                            if (!liveBubble) {
-                                this.hideTypingIndicator();
-                                liveBubble = this.addMessage('bot', '', true);
-                                this.lastBotMessage = liveBubble;
-                            }
-                            this._typingQueue += obj.content;
-                            this._lastFullText += obj.content;
-                            this._startTypingLoop(); // safe: start alleen als hij niet loopt
-                        }
-                    } catch (e) {
-                        console.warn("Kon NDJSON niet parsen:", line, e);
-                    }
-                }
-            }
-
-            // Flush last partial line if any
-            if (buffer.trim()) {
-                try {
-                    const lastObj = JSON.parse(buffer);
-                    if (lastObj.type === "item" && lastObj.content) {
-                        if (!liveBubble) {
-                            this.hideTypingIndicator();
-                            liveBubble = this.addMessage('bot','',true);
-                            this.lastBotMessage = liveBubble;
-                        }
-                        this._typingQueue += lastObj.content;
-                        this._lastFullText += lastObj.content;
-                        this._startTypingLoop();
-                    }
-                } catch {}
-            }
-
-            if (!liveBubble) {
-                this.hideTypingIndicator();
-                liveBubble = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
-                this.lastBotMessage = liveBubble;
-            }
-
-            await this._waitForTypingToDrain();
-
-            // Stream-rendering heeft HTML al gezet; toch nog 1x final clean
-            const textEl = liveBubble.querySelector('.chat-widget__message-text');
-            if (textEl && liveBubble._rawStream) {
-                textEl.innerHTML = this._renderMarkup(liveBubble._rawStream);
-            }
-
-            this.saveMessageToSession({
-                type: 'bot',
-                htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
-                timestamp: new Date().toISOString()
-            });
-
-            this.lastBotMessage = liveBubble;
-            document.getElementById('thumbsUp')?.removeAttribute('disabled');
-            document.getElementById('thumbsDown')?.removeAttribute('disabled');
-
-        } catch (err) {
-            if (!liveBubble) {
-                this.hideTypingIndicator();
-                liveBubble = this.addMessage('bot', '', true);
-                this.lastBotMessage = liveBubble;
-            }
-
-            if (err?.name === "AbortError") {
-                this._appendToLiveBubble(liveBubble, "\n\n⏹️ Verzoek afgebroken.");
-            } else {
-                console.error(err);
-                this._appendToLiveBubble(liveBubble, "Er ging iets mis.");
-            }
-
-            await this._waitForTypingToDrain();
-            const textEl = liveBubble.querySelector('.chat-widget__message-text');
-            if (textEl) textEl.innerHTML = this._renderMarkup(liveBubble._rawStream || textEl.textContent || "");
-            this.saveMessageToSession({
-                type: 'bot',
-                htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
-                timestamp: new Date().toISOString()
-            });
-
-        } finally {
-            if(sendBtn) sendBtn.disabled=false;
-            this._currentAbort = null;
-        }
-    }
-
-    // ---------- UI helpers ----------
-    addMessage(type, htmlText, isRestoring = false) {
-        const msg = document.createElement('div');
-        msg.className = `chat-widget__message chat-widget__message--${type}`;
-
-        const timestamp = new Date();
-        const formattedTime = timestamp.toLocaleString('nl-NL', {
-            day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-        });
-
-        msg.innerHTML = `
-      <div class="chat-widget__message-text">${htmlText}</div>
-      <div class="chat-widget__timestamp">${formattedTime}</div>
-    `;
-
-        const container = document.getElementById('chatMessages');
-        container?.appendChild(msg);
-        if (container) container.scrollTop = container.scrollHeight;
-
-        if (type === 'bot') {
-            this.lastBotMessage = msg;
-            document.getElementById('thumbsUp')?.removeAttribute('disabled');
-            document.getElementById('thumbsDown')?.removeAttribute('disabled');
-        }
-
-        if (!isRestoring) {
-            this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
-        }
-
-        return msg;
-    }
-
-    showTypingIndicator(){
-        const indicator=document.createElement('div');
-        indicator.id='typingIndicator';
-        indicator.className='chat-widget__typing chat-widget__typing--visible';
-        indicator.innerHTML=`
-      <div class="chat-widget__typing-dot"></div>
-      <div class="chat-widget__typing-dot"></div>
-      <div class="chat-widget__typing-dot"></div>
-    `;
-        const messages=document.getElementById('chatMessages');
-        messages?.appendChild(indicator);
-        if(messages) messages.scrollTop = messages.scrollHeight;
-    }
-
-    hideTypingIndicator(){
-        document.getElementById('typingIndicator')?.remove();
-    }
-
-    handleFeedback(isUseful){
-        const thumbsUp=document.getElementById('thumbsUp');
-        const thumbsDown=document.getElementById('thumbsDown');
-
-        if (thumbsUp?.disabled || thumbsDown?.disabled) {
-            this.addMessage('bot','Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
-            return;
-        }
-
-        thumbsUp.classList.remove('chat-widget__feedback-btn--active');
-        thumbsDown.classList.remove('chat-widget__feedback-btn--active');
-
-        if (isUseful) {
-            thumbsUp.classList.add('chat-widget__feedback-btn--active');
-            this.addMessage('bot', this?.texts?.success || this.DEFAULTS.success_text);
-        } else {
-            thumbsDown.classList.add('chat-widget__feedback-btn--active');
-            this.addMessage('bot', this?.texts?.notUseful || this.DEFAULTS.not_useful_text);
-        }
-
-        thumbsUp.setAttribute('disabled', true);
-        thumbsDown.setAttribute('disabled', true);
-
-        const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
-
-        fetch(this.webhookURL, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                type:'feedback',
-                feedback:feedbackLabel,
-                sessionId:this.sessionId,
-                websiteId:this.websiteId,
-                ...(this.userId && { userId: this.userId })
-            })
-        }).catch(()=>{});
-    }
-
-    handleContact(){
-        const html=(this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g,"<br>");
-        this.addMessage('bot',html);
     }
 
     // ---------- Persistence ----------

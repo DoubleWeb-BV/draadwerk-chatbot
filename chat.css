@@ -24,13 +24,6 @@
     transition: opacity .2s ease;
 }
 
-#chat-widget .chat-widget__message-text {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    overflow-wrap: anywhere;
-}
-
 #chat-widget a {
     color: var(--secondary-color);
 }

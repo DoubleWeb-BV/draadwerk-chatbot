@@ -20,7 +20,7 @@ class ChatWidget {
         }
 
         // Typing FX – iets langzamer standaard
-        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 8; // was 8
+        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 88; // was 8
         this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 1;  // was 2
 
         // Internal typing state

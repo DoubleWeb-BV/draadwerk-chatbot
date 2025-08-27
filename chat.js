@@ -1,4 +1,9 @@
 // chat.js
+// Tip (console):
+//   - Gebruik dwChat.setSpeed(delayMs, charsPerTick)
+//   - Of stel apart in: dwChat.delay = 40; dwChat.charsPerTick = 3;
+//   - Pauze/ga door/skip: dwChat.pause(); dwChat.resume(); dwChat.skip();
+
 class ChatWidget {
     /**
      * @param {string} webhookURL - streaming message webhook (NDJSON line per chunk)
@@ -19,15 +24,16 @@ class ChatWidget {
             console.warn("[ChatWidget] websiteId is leeg; config webhook krijgt null.");
         }
 
-        // Typing FX – iets langzamer standaard
-        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 250; // was 8
-        this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 1;  // was 2
+        // Typing FX – iets langzamer standaard (live aanpasbaar)
+        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 250;
+        this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 1;
 
         // Internal typing state
         this._typingQueue = "";
         this._typingLoopRunning = false;
         this._currentAbort = null;
         this._lastFullText = "";
+        this._typeTimer = null; // <— nieuwe timer-based engine
 
         // Storage keys
         this.LS_PREFIX = "dwChat:";
@@ -90,6 +96,9 @@ class ChatWidget {
 
         // Init
         this.init();
+
+        // Console controls (globale alias: dwChat)
+        this._exposeConsoleControls('dwChat');
     }
 
     // ---------- Storage helpers ----------
@@ -415,38 +424,77 @@ class ChatWidget {
         }
     }
 
-    // ---------- Typing engine ----------
-    async _startTypingLoop() {
+    // ---------- Typing speed controls (public) ----------
+    setTypingSpeed({ typeDelayMs, charsPerTick } = {}) {
+        const clampInt = (v, min, max, fallback) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.floor(n))) : fallback;
+        };
+        if (typeDelayMs !== undefined)  this.typeDelayMs  = clampInt(typeDelayMs, 0, 2000, this.typeDelayMs);
+        if (charsPerTick !== undefined) this.charsPerTick = clampInt(charsPerTick, 1, 100,  this.charsPerTick);
+    }
+
+    _exposeConsoleControls(alias = 'dwChat') {
+        const self = this;
+        const g = (window[alias] = window[alias] || {});
+
+        Object.defineProperty(g, 'delay', {
+            get(){ return self.typeDelayMs; },
+            set(v){ self.setTypingSpeed({ typeDelayMs: v }); }
+        });
+        Object.defineProperty(g, 'charsPerTick', {
+            get(){ return self.charsPerTick; },
+            set(v){ self.setTypingSpeed({ charsPerTick: v }); }
+        });
+
+        g.setSpeed = (delay, cpt) => self.setTypingSpeed({ typeDelayMs: delay, charsPerTick: cpt });
+        g.getSpeed = () => ({ delay: self.typeDelayMs, charsPerTick: self.charsPerTick });
+        g.pause  = () => self._stopTypingLoop();
+        g.resume = () => self._startTypingLoop();
+        g.skip   = () => { self._typingQueue = ""; self._stopTypingLoop(); };
+    }
+
+    // ---------- Typing engine (timer-based, console-live adjustable) ----------
+    _startTypingLoop() {
         if (this._typingLoopRunning) return;
         this._typingLoopRunning = true;
 
-        let liveBubble = this.lastBotMessage;
-
-        while (this._typingQueue.length > 0) {
-            // wacht tot sendMessage de eerste bubble maakt
-            if (!liveBubble) {
-                await new Promise(r => setTimeout(r, 10));
-                liveBubble = this.lastBotMessage;
-                continue;
+        const tick = () => {
+            // Niets meer te typen?
+            if (this._typingQueue.length === 0) {
+                this._typingLoopRunning = false;
+                this._typeTimer = null;
+                return;
             }
 
-            const n = Math.max(1, this.charsPerTick | 0);
-            const delay = Math.max(0, this.typeDelayMs | 0);
+            // Lees actuele waardes (live aanpasbaar via console)
+            const n = Math.max(1, Math.floor(this.charsPerTick));
+            const delay = Math.max(0, Math.floor(this.typeDelayMs));
 
+            // Wacht tot er een bot-bubble is aangemaakt door sendMessage()
+            if (!this.lastBotMessage) {
+                this._typeTimer = setTimeout(tick, Math.max(0, delay));
+                return;
+            }
+
+            // Neem n chars uit buffer
             const chunk = this._typingQueue.slice(0, n);
             this._typingQueue = this._typingQueue.slice(n);
 
-            // raw buffer opbouwen en meteen HTML renderen
-            liveBubble._rawStream = (liveBubble._rawStream || "") + chunk;
-            this._renderStreamInto(liveBubble, liveBubble._rawStream);
+            // Append naar bubble
+            this._appendToLiveBubble(this.lastBotMessage, chunk);
 
-            const outContainer = document.getElementById('chatMessages');
-            if (outContainer) outContainer.scrollTop = outContainer.scrollHeight;
+            // Volgende tick
+            this._typeTimer = setTimeout(tick, delay);
+        };
 
-            if (delay > 0) { await new Promise(r => setTimeout(r, delay)); }
-            else { await new Promise(requestAnimationFrame); }
-        }
+        // start direct
+        tick();
+    }
 
+    _stopTypingLoop() {
+        if (this._typeTimer) clearTimeout(this._typeTimer);
+        this._typeTimer = null;
         this._typingLoopRunning = false;
     }
 
@@ -700,7 +748,7 @@ class ChatWidget {
                             }
                             this._typingQueue += obj.content;
                             this._lastFullText += obj.content;
-                            this._startTypingLoop();
+                            this._startTypingLoop(); // safe: start alleen als hij niet loopt
                         }
                     } catch (e) {
                         console.warn("Kon NDJSON niet parsen:", line, e);
@@ -728,6 +776,7 @@ class ChatWidget {
             if (!liveBubble) {
                 this.hideTypingIndicator();
                 liveBubble = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
+                this.lastBotMessage = liveBubble;
             }
 
             await this._waitForTypingToDrain();
@@ -752,6 +801,7 @@ class ChatWidget {
             if (!liveBubble) {
                 this.hideTypingIndicator();
                 liveBubble = this.addMessage('bot', '', true);
+                this.lastBotMessage = liveBubble;
             }
 
             if (err?.name === "AbortError") {

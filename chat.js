@@ -397,15 +397,19 @@ class ChatWidget {
     }
 
     // ---------- Preload from n8n (POST) ----------
+    a// ---------- Preload from n8n (POST) ----------
     async preloadChatData() {
         try {
-            // keep your existing config webhook
-            const res = await fetch("https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g", {
+            // ✅ Gebruik de juiste URL (haal 'g' weg als dat per ongeluk was)
+            const res = await fetch("https://workflows.draadwerk.nl/webhook-test/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    userId: this.userId || null,
-                    sessionId: this.sessionId || null
+                    // ✅ Stuur websiteId i.p.v. userId
+                    websiteId: this.websiteId || null,
+                    sessionId: this.sessionId || null,
+                    // (optioneel) als je tóch ook userId wilt meesturen, doe dit expliciet:
+                    // userId: this.userId || null
                 })
             });
             if (!res.ok) throw new Error(`Webhook error: ${res.status}`);
@@ -413,7 +417,7 @@ class ChatWidget {
             const data = await res.json();
             this.applyRemoteConfig(data);
         } catch (_err) {
-            // Fallback: apply defaults and reveal
+            // Fallback: defaults
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
             this.configLoaded = true;
             this.revealWidget();
@@ -426,6 +430,7 @@ class ChatWidget {
             }
         }
     }
+
 
     // ---------- Open / Close ----------
     async toggleChat() {

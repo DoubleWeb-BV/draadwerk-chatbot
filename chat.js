@@ -1,8 +1,8 @@
 // chat.js
-// Simplified: no typing speed controls, no delays.
-// - Shows content immediately as it streams in.
-// - Removes loading icon as soon as the first content arrives.
-// - Console.logs every word as it comes in.
+// Streaming per woord:
+// - Verwijderd: alle snelheids-/typing-controls.
+// - Loader verdwijnt DIRECT bij eerste tekst.
+// - Elk nieuw woord wordt meteen toegevoegd én gelogd in de console.
 
 class ChatWidget {
     /**
@@ -10,7 +10,7 @@ class ChatWidget {
      * @param {string|null} sessionId
      * @param {string|undefined} userId
      * @param {string} websiteId - REQUIRED for your n8n flow
-     * @param {{}} typingOpts - (ignored, kept for compatibility)
+     * @param {{}} typingOpts - (genegeerd, alleen voor backward-compat)
      */
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
         // Endpoints
@@ -27,6 +27,7 @@ class ChatWidget {
         // Internal state
         this._currentAbort = null;
         this._lastFullText = "";
+        this._streamBuf = ""; // buffer voor binnenkomende tekst (kan midden-in-woord eindigen)
 
         // Storage keys
         this.LS_PREFIX = "dwChat:";
@@ -272,9 +273,52 @@ class ChatWidget {
         return trimmed.length ? trimmed : fallback;
     }
 
+    // Log elk woord dat binnenkomt (zonder whitespace)
     _logIncomingWords(text){
         const words = String(text).match(/\S+/g) || [];
         for(const w of words){ console.log("[ChatWidget] word:", w); }
+    }
+
+    // Verwerk _streamBuf: push complete woorden (woord + daaropvolgende whitespace) naar bubble
+    _flushCompletedWords(final=false){
+        let out = "";
+
+        // 1) Eventuele leading whitespace direct doorzetten (zodat opmaak intact blijft)
+        const lead = this._streamBuf.match(/^\s+/);
+        if (lead) {
+            out += lead[0];
+            this._streamBuf = this._streamBuf.slice(lead[0].length);
+        }
+
+        // 2) Alle "complete" woorden (woord + minimaal 1 whitespace) streamen
+        const rx = /(\S+)(\s+)/g;
+        let m;
+        let consumed = 0;
+        while ((m = rx.exec(this._streamBuf)) !== null) {
+            const word = m[1];
+            const space = m[2];
+            out += word + space;
+            consumed = rx.lastIndex;
+            console.log("[ChatWidget] word:", word);
+        }
+        if (consumed > 0) {
+            this._streamBuf = this._streamBuf.slice(consumed);
+        }
+
+        // 3) Einde van de stream: rest (laatste woord zonder trailing whitespace) ook flushen
+        if (final && this._streamBuf.length) {
+            const tail = this._streamBuf;
+            // Log laatste woord als er nog iets zinnigs staat
+            const tailWords = tail.match(/\S+/g) || [];
+            for (const w of tailWords) console.log("[ChatWidget] word:", w);
+            out += tail;
+            this._streamBuf = "";
+        }
+
+        if (out) {
+            this._appendToLiveBubble(this.lastBotMessage, out);
+            this._lastFullText += out;
+        }
     }
 
     // ---------- Apply remote config ----------
@@ -419,7 +463,7 @@ class ChatWidget {
         }
     }
 
-    // ---------- Messaging (STREAMING NDJSON; immediate render) ----------
+    // ---------- Messaging (STREAMING NDJSON; per woord flush) ----------
     async sendMessage(){
         const input=document.getElementById('chatInput');
         const message=input?.value.trim();
@@ -434,14 +478,15 @@ class ChatWidget {
         // Cancel any in-flight stream
         if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
 
-        // Show loading dots before response
+        // Loader tonen
         this.showTypingIndicator();
         let liveBubble = null;
-        let firstChunkArrived = false;
+        let firstTextArrived = false;
+        this._streamBuf = "";
+        this._lastFullText = "";
 
         const ac = new AbortController();
         this._currentAbort = ac;
-        this._lastFullText = "";
 
         try{
             const res = await fetch(this.webhookURL, {
@@ -478,21 +523,20 @@ class ChatWidget {
                     if (!trimmed) continue;
                     try {
                         const obj = JSON.parse(trimmed);
-                        if (obj.type === "item" && obj.content) {
-                            // First content: remove loader immediately, create bubble
-                            if (!firstChunkArrived) {
-                                this.hideTypingIndicator(); // remove immediately on first text
+                        if (obj.type === "item" && typeof obj.content === "string" && obj.content.length) {
+                            // Eerste tekst? loader meteen weg en bubble maken
+                            if (!firstTextArrived) {
+                                this.hideTypingIndicator();
                                 liveBubble = this.addMessage('bot', '', true);
                                 this.lastBotMessage = liveBubble;
-                                firstChunkArrived = true;
+                                firstTextArrived = true;
                             }
 
-                            // Log words for this chunk
-                            this._logIncomingWords(obj.content);
+                            // Voeg binnengekomen tekst toe aan stream-buffer
+                            this._streamBuf += obj.content;
 
-                            // Append content immediately (no delay)
-                            this._appendToLiveBubble(this.lastBotMessage, obj.content);
-                            this._lastFullText += obj.content;
+                            // Stream onmiddellijk alle complete woorden (woord + whitespace)
+                            this._flushCompletedWords(false);
                         }
                     } catch (e) {
                         console.warn("Kon NDJSON niet parsen:", line, e);
@@ -500,38 +544,23 @@ class ChatWidget {
                 }
             }
 
-            // Flush last partial line if any
-            if (buffer.trim()) {
-                try {
-                    const lastObj = JSON.parse(buffer);
-                    if (lastObj.type === "item" && lastObj.content) {
-                        if (!firstChunkArrived) {
-                            this.hideTypingIndicator();
-                            liveBubble = this.addMessage('bot','',true);
-                            this.lastBotMessage = liveBubble;
-                            firstChunkArrived = true;
-                        }
-                        this._logIncomingWords(lastObj.content);
-                        this._appendToLiveBubble(this.lastBotMessage, lastObj.content);
-                        this._lastFullText += lastObj.content;
-                    }
-                } catch {}
-            }
-
-            if (!firstChunkArrived) {
-                // No content received
+            // Restant uit buffer flushen (laatste woord zonder trailing whitespace)
+            if (firstTextArrived) {
+                this._flushCompletedWords(true);
+            } else {
+                // Geen content ontvangen
                 this.hideTypingIndicator();
                 liveBubble = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
                 this.lastBotMessage = liveBubble;
             }
 
-            // Final sanitize/markup pass
-            if (liveBubble) {
-                const textEl = liveBubble.querySelector('.chat-widget__message-text');
-                if (textEl) textEl.innerHTML = this._renderMarkup(liveBubble._rawStream || textEl.textContent || "");
+            // Final sanitize/markup pass + persist
+            if (this.lastBotMessage) {
+                const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
+                if (textEl) textEl.innerHTML = this._renderMarkup(this.lastBotMessage._rawStream || textEl.textContent || "");
                 this.saveMessageToSession({
                     type: 'bot',
-                    htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
+                    htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
                     timestamp: new Date().toISOString()
                 });
                 document.getElementById('thumbsUp')?.removeAttribute('disabled');
@@ -539,24 +568,23 @@ class ChatWidget {
             }
 
         } catch (err) {
-            if (!liveBubble) {
+            if (!this.lastBotMessage) {
                 this.hideTypingIndicator();
-                liveBubble = this.addMessage('bot', '', true);
-                this.lastBotMessage = liveBubble;
+                this.lastBotMessage = this.addMessage('bot', '', true);
             }
 
             if (err?.name === "AbortError") {
-                this._appendToLiveBubble(liveBubble, "\n\n⏹️ Verzoek afgebroken.");
+                this._appendToLiveBubble(this.lastBotMessage, "\n\n⏹️ Verzoek afgebroken.");
             } else {
                 console.error(err);
-                this._appendToLiveBubble(liveBubble, "Er ging iets mis.");
+                this._appendToLiveBubble(this.lastBotMessage, "Er ging iets mis.");
             }
 
-            const textEl = liveBubble.querySelector('.chat-widget__message-text');
-            if (textEl) textEl.innerHTML = this._renderMarkup(liveBubble._rawStream || textEl.textContent || "");
+            const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
+            if (textEl) textEl.innerHTML = this._renderMarkup(this.lastBotMessage._rawStream || textEl.textContent || "");
             this.saveMessageToSession({
                 type: 'bot',
-                htmlText: liveBubble.querySelector('.chat-widget__message-text')?.innerHTML || '',
+                htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
                 timestamp: new Date().toISOString()
             });
 

@@ -19,9 +19,9 @@ class ChatWidget {
             console.warn("[ChatWidget] websiteId is leeg; config webhook krijgt null.");
         }
 
-        // Typing FX (defaults: 8ms, 2 chars)
-        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 8;
-        this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 2;
+        // Typing FX – iets langzamer standaard
+        this.typeDelayMs  = Number.isFinite(typingOpts.typeDelayMs)  ? typingOpts.typeDelayMs  : 22; // was 8
+        this.charsPerTick = Number.isFinite(typingOpts.charsPerTick) ? typingOpts.charsPerTick : 1;  // was 2
 
         // Internal typing state
         this._typingQueue = "";
@@ -443,11 +443,8 @@ class ChatWidget {
             const outContainer = document.getElementById('chatMessages');
             if (outContainer) outContainer.scrollTop = outContainer.scrollHeight;
 
-            if (delay > 0) {
-                await new Promise(r => setTimeout(r, delay));
-            } else {
-                await new Promise(requestAnimationFrame);
-            }
+            if (delay > 0) { await new Promise(r => setTimeout(r, delay)); }
+            else { await new Promise(requestAnimationFrame); }
         }
 
         this._typingLoopRunning = false;
@@ -473,32 +470,19 @@ class ChatWidget {
         if (messages) messages.scrollTop = messages.scrollHeight;
     }
 
-    // Eenvoudige renderer: escape → lists → autolink → br
+    // ---- Live renderer: lijsten + markdown links + autolink + sanitizen ----
     _renderMarkup(text) {
-        // 1) HTML escapen (voorkomt XSS)
-        let out = text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#39;");
+        // 1) Markdown-achtige lijsten -> echte <ul>/<ol>
+        let htmlish = this._convertMarkdownLists(text);
 
-        // 2) Markdown-achtige lijsten naar echte <ul>/<ol>
-        out = this._convertMarkdownLists(out);
-
-        // 3) Autolink URLs (buiten bestaande <a> tags)
-        out = out.replace(
-            /(^|[\s(])((?:https?:\/\/|www\.)[^\s<)]+)(?![^<]*>)/gi,
-            (m, pre, url) => {
-                const href = url.startsWith('http') ? url : 'https://' + url;
-                return `${pre}<a href="${href}" target="_blank" rel="noopener noreferrer">${url}</a>`;
-            }
+        // 2) Markdown links [tekst](url) -> <a>
+        htmlish = htmlish.replace(
+            /\[([^[\]]+)\]\(((?:https?:\/\/|www\.)[^\s)]+)\)/gi,
+            (m, label, url) => `<a href="${url}">${label}</a>`
         );
 
-        // 4) Nieuwe regels naar <br> (behalve direct na lijst-sluiters)
-        out = out.replace(/(?<!<\/li>|<\/ul>|<\/ol>)\n/g, "<br>");
-
-        return out;
+        // 3) Sanitize + autolink + linebreaks
+        return this._sanitizeAndAutolink(htmlish);
     }
 
     _convertMarkdownLists(text) {
@@ -543,6 +527,111 @@ class ChatWidget {
 
         flushUL(); flushOL();
         return out;
+    }
+
+    _sanitizeAndAutolink(htmlish) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlish, 'text/html');
+
+        const allowed = new Set(['A','UL','OL','LI','BR','B','STRONG','I','EM','CODE','PRE']);
+
+        const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
+
+        const sanitizeHref = (href) => {
+            let u = (href || '').trim();
+            if (!u) return '';
+            if (/^www\./i.test(u)) u = 'https://' + u;
+            if (!/^https?:\/\//i.test(u) && !/^mailto:/i.test(u) && !/^tel:/i.test(u)) return '';
+            try {
+                const parsed = new URL(u, window.location.origin);
+                if (['http:','https:','mailto:','tel:'].includes(parsed.protocol)) return parsed.href;
+            } catch {}
+            return '';
+        };
+
+        const appendTextWithBreaks = (frag, text) => {
+            const parts = String(text).split('\n');
+            for (let i = 0; i < parts.length; i++) {
+                if (parts[i]) frag.appendChild(doc.createTextNode(parts[i]));
+                if (i < parts.length - 1) frag.appendChild(doc.createElement('br'));
+            }
+        };
+
+        const autolinkTextNode = (node) => {
+            const txt = node.nodeValue;
+            let last = 0;
+            const frag = doc.createDocumentFragment();
+
+            txt.replace(urlRegex, (m, _u, idx) => {
+                const before = txt.slice(last, idx);
+                if (before) appendTextWithBreaks(frag, before);
+
+                const a = doc.createElement('a');
+                const safe = sanitizeHref(m);
+                if (safe) {
+                    a.setAttribute('href', safe);
+                    a.setAttribute('target', '_blank');
+                    a.setAttribute('rel', 'noopener noreferrer');
+                    a.textContent = m;
+                    frag.appendChild(a);
+                } else {
+                    appendTextWithBreaks(frag, m);
+                }
+                last = idx + m.length;
+                return m;
+            });
+
+            const rest = txt.slice(last);
+            if (rest) appendTextWithBreaks(frag, rest);
+
+            node.parentNode.replaceChild(frag, node);
+        };
+
+        const walk = (node) => {
+            for (const child of [...node.childNodes]) {
+                if (child.nodeType === 3) { // text
+                    autolinkTextNode(child);
+                } else if (child.nodeType === 1) { // element
+                    const tag = child.tagName;
+
+                    if (!allowed.has(tag)) {
+                        // unwrap: behoud inhoud, verwijder element
+                        const frag = doc.createDocumentFragment();
+                        while (child.firstChild) frag.appendChild(child.firstChild);
+                        node.replaceChild(frag, child);
+                        continue; // process moved children in next iteration
+                    }
+
+                    if (tag === 'A') {
+                        const safe = sanitizeHref(child.getAttribute('href') || '');
+                        if (!safe) {
+                            const frag = doc.createDocumentFragment();
+                            while (child.firstChild) frag.appendChild(child.firstChild);
+                            node.replaceChild(frag, child);
+                            continue;
+                        }
+                        child.setAttribute('href', safe);
+                        child.setAttribute('target', '_blank');
+                        child.setAttribute('rel', 'noopener noreferrer');
+                        // verwijder overige attrs
+                        for (const attr of [...child.attributes]) {
+                            const name = attr.name.toLowerCase();
+                            if (!['href','target','rel'].includes(name)) child.removeAttribute(attr.name);
+                        }
+                    } else {
+                        // geen attrs op andere tags
+                        for (const attr of [...child.attributes]) child.removeAttribute(attr.name);
+                    }
+
+                    walk(child);
+                } else if (child.nodeType === 8) {
+                    node.removeChild(child); // comments weg
+                }
+            }
+        };
+
+        walk(doc.body);
+        return doc.body.innerHTML;
     }
 
     // ---------- Messaging (STREAMING NDJSON) ----------
@@ -643,7 +732,7 @@ class ChatWidget {
 
             await this._waitForTypingToDrain();
 
-            // Hier niets meer converteren; stream-rendering heeft HTML al gezet
+            // Stream-rendering heeft HTML al gezet; toch nog 1x final clean
             const textEl = liveBubble.querySelector('.chat-widget__message-text');
             if (textEl && liveBubble._rawStream) {
                 textEl.innerHTML = this._renderMarkup(liveBubble._rawStream);

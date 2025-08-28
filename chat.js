@@ -1,8 +1,9 @@
 // chat.js
-// Streaming per woord:
-// - Verwijderd: alle snelheids-/typing-controls.
+// Streaming per WOORD (ook als server grote chunks stuurt):
 // - Loader verdwijnt DIRECT bij eerste tekst.
-// - Elk nieuw woord wordt meteen toegevoegd én gelogd in de console.
+// - Woorden worden één-voor-één ge-renderd via requestAnimationFrame.
+// - Console.log bij ELK woord precies op het moment dat het verschijnt.
+// - Geen snelheids- of typing-instellingen.
 
 class ChatWidget {
     /**
@@ -18,16 +19,19 @@ class ChatWidget {
         this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
 
         // Identity
-        this.userId = userId;       // niet nodig voor config webhook
-        this.websiteId = websiteId; // WEL nodig
+        this.userId = userId;
+        this.websiteId = websiteId;
         if (!this.websiteId) {
             console.warn("[ChatWidget] websiteId is leeg; config webhook krijgt null.");
         }
 
-        // Internal state
+        // Streaming/typing state
         this._currentAbort = null;
         this._lastFullText = "";
-        this._streamBuf = ""; // buffer voor binnenkomende tekst (kan midden-in-woord eindigen)
+        this._streamBuf = "";       // tussenbuffer voor binnenkomende tekst per chunk
+        this._wordQueue = [];       // tokens die per woord ge-renderd worden
+        this._wordPumpRunning = false;
+        this._drainResolvers = [];
 
         // Storage keys
         this.LS_PREFIX = "dwChat:";
@@ -50,7 +54,7 @@ class ChatWidget {
         this.chatConfig = null;
         this.configLoaded = false;
         this.configReady = null;
-        this._sessionJustCreated = false; // wordt gezet in loadOrCreateSessionId
+        this._sessionJustCreated = false;
 
         this.texts = {
             success: "Dank je! Fijn dat ik je kon helpen. 😊",
@@ -79,7 +83,7 @@ class ChatWidget {
         this.adoptOrCreateTabId();
         // 2) fresh-start detection
         this.maybeResetForNewBrowser();
-        // 3) session id (zet ook _sessionJustCreated)
+        // 3) session id
         this.sessionId = this.loadOrCreateSessionId(sessionId);
 
         // per-session keys
@@ -162,7 +166,6 @@ class ChatWidget {
         this.setupBroadcastChannel();
         this.setupStorageSync();
 
-        // Config slechts één keer per sessie ophalen; anders uit cache
         this.configReady=this.preloadChatData().catch(()=>{});
         this.configReady.finally(()=>{
             this.restoreOpenState();
@@ -273,52 +276,87 @@ class ChatWidget {
         return trimmed.length ? trimmed : fallback;
     }
 
-    // Log elk woord dat binnenkomt (zonder whitespace)
-    _logIncomingWords(text){
-        const words = String(text).match(/\S+/g) || [];
-        for(const w of words){ console.log("[ChatWidget] word:", w); }
-    }
+    // Zet binnenkomende tekst om naar tokens en zet in de queue (woord voor woord)
+    _enqueueStream(text, isFinal=false){
+        this._streamBuf += String(text);
 
-    // Verwerk _streamBuf: push complete woorden (woord + daaropvolgende whitespace) naar bubble
-    _flushCompletedWords(final=false){
-        let out = "";
-
-        // 1) Eventuele leading whitespace direct doorzetten (zodat opmaak intact blijft)
+        // 1) Leading whitespace meteen emitten (als eigen token, zonder log)
         const lead = this._streamBuf.match(/^\s+/);
         if (lead) {
-            out += lead[0];
+            this._wordQueue.push({ text: lead[0], word: null });
             this._streamBuf = this._streamBuf.slice(lead[0].length);
         }
 
-        // 2) Alle "complete" woorden (woord + minimaal 1 whitespace) streamen
+        // 2) Emit alle complete woorden (woord + minstens 1 whitespace)
         const rx = /(\S+)(\s+)/g;
-        let m;
-        let consumed = 0;
+        let m, consumed = 0;
         while ((m = rx.exec(this._streamBuf)) !== null) {
             const word = m[1];
             const space = m[2];
-            out += word + space;
+            this._wordQueue.push({ text: word + space, word });
             consumed = rx.lastIndex;
-            console.log("[ChatWidget] word:", word);
         }
         if (consumed > 0) {
             this._streamBuf = this._streamBuf.slice(consumed);
         }
 
-        // 3) Einde van de stream: rest (laatste woord zonder trailing whitespace) ook flushen
-        if (final && this._streamBuf.length) {
+        // 3) Einde stream: eventuele rest (laatste woord zonder trailing ws) ook emitten
+        if (isFinal && this._streamBuf.length) {
+            // behoud exacte rest; log elk \S+ fragment
             const tail = this._streamBuf;
-            // Log laatste woord als er nog iets zinnigs staat
             const tailWords = tail.match(/\S+/g) || [];
-            for (const w of tailWords) console.log("[ChatWidget] word:", w);
-            out += tail;
+            if (tailWords.length === 0) {
+                this._wordQueue.push({ text: tail, word: null });
+            } else {
+                // we proberen rest ook als één token te plaatsen (zodat layout behouden blijft)
+                this._wordQueue.push({ text: tail, word: tailWords[0] });
+            }
             this._streamBuf = "";
         }
 
-        if (out) {
-            this._appendToLiveBubble(this.lastBotMessage, out);
-            this._lastFullText += out;
+        // start pump als die nog niet loopt
+        if (!this._wordPumpRunning && this._wordQueue.length > 0) {
+            this._startWordPump();
         }
+    }
+
+    _startWordPump(){
+        if (this._wordPumpRunning) return;
+        this._wordPumpRunning = true;
+
+        const step = () => {
+            // klaar?
+            if (this._wordQueue.length === 0) {
+                this._wordPumpRunning = false;
+                // resolve eventuele wachtenden
+                const resolvers = this._drainResolvers.splice(0);
+                resolvers.forEach(r => r());
+                return;
+            }
+
+            // Zorg dat er een bubble is
+            if (!this.lastBotMessage) {
+                this.lastBotMessage = this.addMessage('bot', '', true);
+            }
+
+            // één token per frame
+            const token = this._wordQueue.shift();
+            if (token) {
+                if (token.word) console.log("[ChatWidget] word:", token.word);
+                this._appendToLiveBubble(this.lastBotMessage, token.text);
+                this._lastFullText += token.text;
+            }
+
+            // volgende frame
+            requestAnimationFrame(step);
+        };
+
+        requestAnimationFrame(step);
+    }
+
+    _waitForWordPumpToDrain(){
+        if (!this._wordPumpRunning && this._wordQueue.length === 0) return Promise.resolve();
+        return new Promise(res => this._drainResolvers.push(res));
     }
 
     // ---------- Apply remote config ----------
@@ -386,19 +424,17 @@ class ChatWidget {
     // ---------- Preload from n8n (POST) ----------
     async preloadChatData(){
         try{
-            // Gebruik cache als de sessie niet net is aangemaakt
             if (!this._sessionJustCreated) {
                 const cached = this.lsGet(this.KEY_CONFIG);
                 if (cached) {
                     try {
                         const cfg = JSON.parse(cached);
                         this.applyRemoteConfig(cfg);
-                        return; // geen netwerk-call
+                        return;
                     } catch {}
                 }
             }
 
-            // Anders (nieuwe sessie of geen cache): één call naar de webhook
             const res = await fetch(this.CONFIG_WEBHOOK, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -410,12 +446,10 @@ class ChatWidget {
             if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
 
             const data = await res.json();
-            // cache config voor deze websiteId
             try { this.lsSet(this.KEY_CONFIG, JSON.stringify(data)); } catch {}
             this.applyRemoteConfig(data);
 
         } catch (_err){
-            // Fallback: defaults
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
             this.configLoaded = true;
             this.revealWidget();
@@ -463,7 +497,7 @@ class ChatWidget {
         }
     }
 
-    // ---------- Messaging (STREAMING NDJSON; per woord flush) ----------
+    // ---------- Messaging (STREAMING NDJSON; per woord) ----------
     async sendMessage(){
         const input=document.getElementById('chatInput');
         const message=input?.value.trim();
@@ -480,10 +514,10 @@ class ChatWidget {
 
         // Loader tonen
         this.showTypingIndicator();
-        let liveBubble = null;
-        let firstTextArrived = false;
+        let firstTokenQueued = false;
         this._streamBuf = "";
         this._lastFullText = "";
+        this._wordQueue.length = 0;
 
         const ac = new AbortController();
         this._currentAbort = ac;
@@ -524,19 +558,14 @@ class ChatWidget {
                     try {
                         const obj = JSON.parse(trimmed);
                         if (obj.type === "item" && typeof obj.content === "string" && obj.content.length) {
-                            // Eerste tekst? loader meteen weg en bubble maken
-                            if (!firstTextArrived) {
-                                this.hideTypingIndicator();
-                                liveBubble = this.addMessage('bot', '', true);
-                                this.lastBotMessage = liveBubble;
-                                firstTextArrived = true;
+                            // queue tokens
+                            this._enqueueStream(obj.content, false);
+
+                            if (!firstTokenQueued && (this._wordQueue.length > 0 || this._streamBuf.length > 0)) {
+                                this.hideTypingIndicator(); // DIRECT loader weg bij eerste content
+                                if (!this.lastBotMessage) this.lastBotMessage = this.addMessage('bot', '', true);
+                                firstTokenQueued = true;
                             }
-
-                            // Voeg binnengekomen tekst toe aan stream-buffer
-                            this._streamBuf += obj.content;
-
-                            // Stream onmiddellijk alle complete woorden (woord + whitespace)
-                            this._flushCompletedWords(false);
                         }
                     } catch (e) {
                         console.warn("Kon NDJSON niet parsen:", line, e);
@@ -544,17 +573,18 @@ class ChatWidget {
                 }
             }
 
-            // Restant uit buffer flushen (laatste woord zonder trailing whitespace)
-            if (firstTextArrived) {
-                this._flushCompletedWords(true);
-            } else {
-                // Geen content ontvangen
+            // flush rest
+            this._enqueueStream("", true);
+
+            if (!firstTokenQueued && this._wordQueue.length === 0) {
                 this.hideTypingIndicator();
-                liveBubble = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
-                this.lastBotMessage = liveBubble;
+                this.lastBotMessage = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
             }
 
-            // Final sanitize/markup pass + persist
+            // wacht tot alle tokens ge-renderd zijn
+            await this._waitForWordPumpToDrain();
+
+            // final sanitize + persist
             if (this.lastBotMessage) {
                 const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
                 if (textEl) textEl.innerHTML = this._renderMarkup(this.lastBotMessage._rawStream || textEl.textContent || "");
@@ -827,11 +857,10 @@ class ChatWidget {
                     const tag = child.tagName;
 
                     if (!allowed.has(tag)) {
-                        // unwrap: behoud inhoud, verwijder element
                         const frag = doc.createDocumentFragment();
                         while (child.firstChild) frag.appendChild(child.firstChild);
                         node.replaceChild(frag, child);
-                        continue; // process moved children in next iteration
+                        continue;
                     }
 
                     if (tag === 'A') {
@@ -845,19 +874,17 @@ class ChatWidget {
                         child.setAttribute('href', safe);
                         child.setAttribute('target', '_blank');
                         child.setAttribute('rel', 'noopener noreferrer');
-                        // verwijder overige attrs
                         for (const attr of [...child.attributes]) {
                             const name = attr.name.toLowerCase();
                             if (!['href','target','rel'].includes(name)) child.removeAttribute(attr.name);
                         }
                     } else {
-                        // geen attrs op andere tags
                         for (const attr of [...child.attributes]) child.removeAttribute(attr.name);
                     }
 
                     walk(child);
                 } else if (child.nodeType === 8) {
-                    node.removeChild(child); // comments weg
+                    node.removeChild(child);
                 }
             }
         };

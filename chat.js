@@ -7,6 +7,10 @@ class ChatWidget {
 
         this._currentAbort = null;
         this._rawHTMLStream = "";
+        this._tokenQueue = [];
+        this._pumpRunning = false;
+        this._pendingTag = "";
+        this._drainResolvers = [];
 
         this.LS_PREFIX = "dwChat:";
         this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
@@ -373,6 +377,8 @@ class ChatWidget {
 
         this.showTypingIndicator();
         this._rawHTMLStream = "";
+        this._tokenQueue.length = 0;
+        this._pendingTag = "";
         this.lastBotMessage = null;
 
         const ac = new AbortController();
@@ -420,19 +426,18 @@ class ChatWidget {
                                 this.lastBotMessage = this.addMessage('bot', '', true);
                                 gotFirst = true;
                             }
-                            this._rawHTMLStream += obj.content;
-                            this._renderStreamInto(this.lastBotMessage, this._rawHTMLStream);
+                            this._enqueueHTMLTokens(obj.content);
                         }
                     } catch {}
                 }
             }
 
+            await this._waitForPumpDrain();
+
             if (!gotFirst) {
                 this.hideTypingIndicator();
                 this.lastBotMessage = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
-            }
-
-            if (this.lastBotMessage) {
+            } else if (this.lastBotMessage) {
                 const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
                 if (textEl) textEl.innerHTML = this._sanitizeHTML(this._rawHTMLStream || textEl.innerHTML || "");
                 this.saveMessageToSession({
@@ -449,7 +454,8 @@ class ChatWidget {
                 this.hideTypingIndicator();
                 this.lastBotMessage = this.addMessage('bot', '', true);
             }
-            this._appendToLiveBubbleHTML(this.lastBotMessage, "<p>Er ging iets mis.</p>");
+            this._appendToken("<p>Er ging iets mis.</p>");
+            await this._waitForPumpDrain();
             const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
             if (textEl) textEl.innerHTML = this._sanitizeHTML(this._rawHTMLStream || textEl.innerHTML || "");
             this.saveMessageToSession({
@@ -463,30 +469,79 @@ class ChatWidget {
         }
     }
 
+    _enqueueHTMLTokens(str){
+        if (!str) return;
+        let s = (this._pendingTag || "") + String(str);
+        this._pendingTag = "";
+        let i = 0;
+        while (i < s.length) {
+            if (s[i] === '<') {
+                const j = s.indexOf('>', i);
+                if (j === -1) {
+                    this._pendingTag = s.slice(i);
+                    break;
+                }
+                this._tokenQueue.push(s.slice(i, j + 1));
+                i = j + 1;
+            } else {
+                let j = s.indexOf('<', i);
+                if (j === -1) j = s.length;
+                const text = s.slice(i, j);
+                const parts = text.match(/(\S+|\s+)/g) || [];
+                for (const p of parts) this._tokenQueue.push(p);
+                i = j;
+            }
+        }
+        if (!this._pumpRunning && this._tokenQueue.length) this._startPump();
+    }
+
+    _startPump(){
+        if (this._pumpRunning) return;
+        this._pumpRunning = true;
+        const step = () => {
+            if (!this._tokenQueue.length) {
+                this._pumpRunning = false;
+                const rs = this._drainResolvers.splice(0);
+                rs.forEach(fn=>fn());
+                return;
+            }
+            const tok = this._tokenQueue.shift();
+            this._appendToken(tok);
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    }
+
+    _appendToken(tok){
+        if (!this.lastBotMessage) return;
+        this._rawHTMLStream += String(tok);
+        this._renderStreamInto(this.lastBotMessage, this._rawHTMLStream);
+    }
+
+    _waitForPumpDrain(){
+        if (!this._pumpRunning && this._tokenQueue.length === 0) return Promise.resolve();
+        return new Promise(res => this._drainResolvers.push(res));
+    }
+
     addMessage(type, htmlText, isRestoring = false) {
         const msg = document.createElement('div');
         msg.className = `chat-widget__message chat-widget__message--${type}`;
-
         const timestamp = new Date();
         const formattedTime = timestamp.toLocaleString('nl-NL', {
             day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
         });
-
         msg.innerHTML = `
       <div class="chat-widget__message-text">${htmlText}</div>
       <div class="chat-widget__timestamp">${formattedTime}</div>
     `;
-
         const container = document.getElementById('chatMessages');
         container?.appendChild(msg);
         if (container) container.scrollTop = container.scrollHeight;
-
         if (type === 'bot') {
             this.lastBotMessage = msg;
             document.getElementById('thumbsUp')?.removeAttribute('disabled');
             document.getElementById('thumbsDown')?.removeAttribute('disabled');
         }
-
         if (!isRestoring) {
             this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
         }
@@ -511,15 +566,12 @@ class ChatWidget {
     handleFeedback(isUseful){
         const thumbsUp=document.getElementById('thumbsUp');
         const thumbsDown=document.getElementById('thumbsDown');
-
         if (thumbsUp?.disabled || thumbsDown?.disabled) {
             this.addMessage('bot','Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
             return;
         }
-
         thumbsUp.classList.remove('chat-widget__feedback-btn--active');
         thumbsDown.classList.remove('chat-widget__feedback-btn--active');
-
         if (isUseful) {
             thumbsUp.classList.add('chat-widget__feedback-btn--active');
             this.addMessage('bot', this?.texts?.success || this.DEFAULTS.success_text);
@@ -527,12 +579,9 @@ class ChatWidget {
             thumbsDown.classList.add('chat-widget__feedback-btn--active');
             this.addMessage('bot', this?.texts?.notUseful || this.DEFAULTS.not_useful_text);
         }
-
         thumbsUp.setAttribute('disabled', true);
         thumbsDown.setAttribute('disabled', true);
-
         const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
-
         fetch(this.webhookURL, {
             method:'POST',
             headers:{'Content-Type':'application/json'},
@@ -551,16 +600,6 @@ class ChatWidget {
         this.addMessage('bot',html);
     }
 
-    _appendToLiveBubbleHTML(bubble, html){
-        if(!bubble) return;
-        bubble._rawStream = (bubble._rawStream || "") + String(html);
-        const textEl = bubble.querySelector('.chat-widget__message-text');
-        if (!textEl) return;
-        textEl.innerHTML = this._sanitizeHTML(bubble._rawStream);
-        const messages = document.getElementById('chatMessages');
-        if (messages) messages.scrollTop = messages.scrollHeight;
-    }
-
     _renderStreamInto(bubble, rawHTML) {
         const textEl = bubble.querySelector('.chat-widget__message-text');
         if (!textEl) return;
@@ -573,7 +612,6 @@ class ChatWidget {
     _sanitizeHTML(htmlish) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(String(htmlish), 'text/html');
-
         const allowed = new Set(['A','P','UL','OL','LI','BR','B','STRONG','I','EM','CODE','PRE','H1','H2','H3','H4','H5','H6','BLOCKQUOTE']);
         const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
 
@@ -593,11 +631,9 @@ class ChatWidget {
             const txt = node.nodeValue;
             let last = 0;
             const frag = doc.createDocumentFragment();
-
             txt.replace(urlRegex, (m, _u, idx) => {
                 const before = txt.slice(last, idx);
                 if (before) frag.appendChild(doc.createTextNode(before));
-
                 const a = doc.createElement('a');
                 const safe = sanitizeHref(m);
                 if (safe) {
@@ -612,10 +648,8 @@ class ChatWidget {
                 last = idx + m.length;
                 return m;
             });
-
             const rest = txt.slice(last);
             if (rest) frag.appendChild(doc.createTextNode(rest));
-
             node.parentNode.replaceChild(frag, node);
         };
 
@@ -625,14 +659,12 @@ class ChatWidget {
                     autolinkTextNode(child);
                 } else if (child.nodeType === 1) {
                     const tag = child.tagName;
-
                     if (!allowed.has(tag)) {
                         const frag = doc.createDocumentFragment();
                         while (child.firstChild) frag.appendChild(child.firstChild);
                         node.replaceChild(frag, child);
                         continue;
                     }
-
                     if (tag === 'A') {
                         const safe = sanitizeHref(child.getAttribute('href') || '');
                         if (!safe) {
@@ -651,7 +683,6 @@ class ChatWidget {
                     } else {
                         for (const attr of [...child.attributes]) child.removeAttribute(attr.name);
                     }
-
                     walk(child);
                 } else if (child.nodeType === 8) {
                     node.removeChild(child);
@@ -674,14 +705,11 @@ class ChatWidget {
     restoreChatHistory(){
         if (this.chatRestored) return;
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
-
         const messagesEl = document.getElementById('chatMessages');
         if (messagesEl) messagesEl.innerHTML = '';
-
         history.forEach(entry => {
             this.addMessage(entry.type, entry.htmlText, true);
         });
-
         this.chatRestored = true;
     }
 

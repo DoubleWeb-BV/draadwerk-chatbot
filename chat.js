@@ -1,39 +1,17 @@
-// chat.js
-// Streaming per WOORD (ook als server grote chunks stuurt):
-// - Loader verdwijnt DIRECT bij eerste tekst.
-// - Woorden worden één-voor-één ge-renderd via requestAnimationFrame.
-// - Console.log bij ELK woord precies op het moment dat het verschijnt.
-// - Geen snelheids- of typing-instellingen.
-
 class ChatWidget {
-    /**
-     * @param {string} webhookURL - streaming message webhook (NDJSON line per chunk)
-     * @param {string|null} sessionId
-     * @param {string|undefined} userId
-     * @param {string} websiteId - REQUIRED for your n8n flow
-     * @param {{}} typingOpts - (genegeerd, alleen voor backward-compat)
-     */
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
-        // Endpoints
-        this.webhookURL = webhookURL; // streaming webhook
+        this.webhookURL = webhookURL;
         this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
-
-        // Identity
         this.userId = userId;
         this.websiteId = websiteId;
-        if (!this.websiteId) {
-            console.warn("[ChatWidget] websiteId is leeg; config webhook krijgt null.");
-        }
 
-        // Streaming/typing state
         this._currentAbort = null;
         this._lastFullText = "";
-        this._streamBuf = "";       // tussenbuffer voor binnenkomende tekst per chunk
-        this._wordQueue = [];       // tokens die per woord ge-renderd worden
+        this._streamBuf = "";
+        this._wordQueue = [];
         this._wordPumpRunning = false;
         this._drainResolvers = [];
 
-        // Storage keys
         this.LS_PREFIX = "dwChat:";
         this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
         this.KEY_HISTORY    = null;
@@ -42,12 +20,10 @@ class ChatWidget {
         this.KEY_TOOLTIP    = null;
         this.KEY_CONFIG     = `${this.LS_PREFIX}config:${this.websiteId || "default"}`;
 
-        // Tab + last seen
         this.SS_TAB_ID     = this.LS_PREFIX + "tabId";
         this.KEY_LAST_SEEN = this.LS_PREFIX + "lastSeen";
         this.RESET_MS      = 4000;
 
-        // State
         this.isOpen = false;
         this.lastBotMessage = null;
         this.chatRestored = false;
@@ -79,31 +55,24 @@ class ChatWidget {
 
         this.channel = null;
 
-        // 1) tab fingerprint
         this.adoptOrCreateTabId();
-        // 2) fresh-start detection
         this.maybeResetForNewBrowser();
-        // 3) session id
         this.sessionId = this.loadOrCreateSessionId(sessionId);
 
-        // per-session keys
         this.KEY_HISTORY = `${this.LS_PREFIX}history:${this.sessionId}`;
         this.KEY_WELCOME = `${this.LS_PREFIX}welcome:${this.sessionId}`;
         this.KEY_OPEN    = `${this.LS_PREFIX}isOpen:${this.sessionId}`;
         this.KEY_TOOLTIP = `${this.LS_PREFIX}tooltipDismissed:${this.sessionId}`;
 
-        // Init
         this.init();
     }
 
-    // ---------- Storage helpers ----------
     lsGet(k){ return localStorage.getItem(k); }
     lsSet(k,v){ localStorage.setItem(k,v); }
     lsRemove(k){ localStorage.removeItem(k); }
     ssGet(k){ return sessionStorage.getItem(k); }
     ssSet(k,v){ sessionStorage.setItem(k,v); }
 
-    // ---------- Hide/Reveal ----------
     ensureHidden(){
         const root=document.getElementById('chat-widget');
         if(root){ root.setAttribute('data-ready','0'); root.style.visibility='hidden'; root.style.opacity='0'; }
@@ -113,7 +82,6 @@ class ChatWidget {
         if(root){ root.setAttribute('data-ready','1'); root.style.visibility='visible'; root.style.opacity='1'; }
     }
 
-    // ---------- Tab fingerprint & browser-new detection ----------
     adoptOrCreateTabId(){
         let tabId=this.ssGet(this.SS_TAB_ID);
         if(!tabId){
@@ -146,7 +114,6 @@ class ChatWidget {
         this._heartbeat=setInterval(()=>{ if(!document.hidden) this.lsSet(this.KEY_LAST_SEEN,String(Date.now())); },2000);
     }
 
-    // ---------- Session ID ----------
     loadOrCreateSessionId(provided){
         let sid=this.lsGet(this.KEY_SESSION_ID);
         if(!sid){
@@ -159,7 +126,6 @@ class ChatWidget {
         return sid;
     }
 
-    // ---------- Init ----------
     init(){
         this.ensureHidden();
         this.bindEvents();
@@ -174,7 +140,6 @@ class ChatWidget {
         });
     }
 
-    // ---------- Events ----------
     bindEvents(){
         const chatButton=document.getElementById('chatButton');
         const chatClose=document.getElementById('chatClose');
@@ -211,7 +176,6 @@ class ChatWidget {
         );
     }
 
-    // ---------- Cross-tab sync ----------
     setupBroadcastChannel(){
         if("BroadcastChannel" in window){
             this.channel=new BroadcastChannel("dw-chat");
@@ -242,7 +206,6 @@ class ChatWidget {
         });
     }
 
-    // ---------- Tooltip ----------
     showTooltip(){
         setTimeout(()=>{
             if(!this.configLoaded) return;
@@ -261,14 +224,12 @@ class ChatWidget {
     }
     startPulseAnimation(){ setTimeout(()=>{ document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse'); }, 10000); }
 
-    // ---------- Theme (CSS vars) ----------
     applyTheme(primary, secondary){
         const root=document.querySelector('#chat-widget') || document.documentElement;
         root.style.setProperty('--primary-color', primary || this.DEFAULTS.primary_color);
         root.style.setProperty('--secondary-color', secondary || this.DEFAULTS.secondary_color);
     }
 
-    // ---------- Helpers ----------
     _normalize(value, fallback){
         if(Array.isArray(value)) value=value[0];
         if(typeof value!=="string") return fallback;
@@ -276,18 +237,13 @@ class ChatWidget {
         return trimmed.length ? trimmed : fallback;
     }
 
-    // Zet binnenkomende tekst om naar tokens en zet in de queue (woord voor woord)
     _enqueueStream(text, isFinal=false){
         this._streamBuf += String(text);
-
-        // 1) Leading whitespace meteen emitten (als eigen token, zonder log)
         const lead = this._streamBuf.match(/^\s+/);
         if (lead) {
             this._wordQueue.push({ text: lead[0], word: null });
             this._streamBuf = this._streamBuf.slice(lead[0].length);
         }
-
-        // 2) Emit alle complete woorden (woord + minstens 1 whitespace)
         const rx = /(\S+)(\s+)/g;
         let m, consumed = 0;
         while ((m = rx.exec(this._streamBuf)) !== null) {
@@ -299,22 +255,16 @@ class ChatWidget {
         if (consumed > 0) {
             this._streamBuf = this._streamBuf.slice(consumed);
         }
-
-        // 3) Einde stream: eventuele rest (laatste woord zonder trailing ws) ook emitten
         if (isFinal && this._streamBuf.length) {
-            // behoud exacte rest; log elk \S+ fragment
             const tail = this._streamBuf;
             const tailWords = tail.match(/\S+/g) || [];
             if (tailWords.length === 0) {
                 this._wordQueue.push({ text: tail, word: null });
             } else {
-                // we proberen rest ook als één token te plaatsen (zodat layout behouden blijft)
                 this._wordQueue.push({ text: tail, word: tailWords[0] });
             }
             this._streamBuf = "";
         }
-
-        // start pump als die nog niet loopt
         if (!this._wordPumpRunning && this._wordQueue.length > 0) {
             this._startWordPump();
         }
@@ -323,34 +273,23 @@ class ChatWidget {
     _startWordPump(){
         if (this._wordPumpRunning) return;
         this._wordPumpRunning = true;
-
         const step = () => {
-            // klaar?
             if (this._wordQueue.length === 0) {
                 this._wordPumpRunning = false;
-                // resolve eventuele wachtenden
                 const resolvers = this._drainResolvers.splice(0);
                 resolvers.forEach(r => r());
                 return;
             }
-
-            // Zorg dat er een bubble is
             if (!this.lastBotMessage) {
                 this.lastBotMessage = this.addMessage('bot', '', true);
             }
-
-            // één token per frame
             const token = this._wordQueue.shift();
             if (token) {
-                if (token.word) console.log("[ChatWidget] word:", token.word);
                 this._appendToLiveBubble(this.lastBotMessage, token.text);
                 this._lastFullText += token.text;
             }
-
-            // volgende frame
             requestAnimationFrame(step);
         };
-
         requestAnimationFrame(step);
     }
 
@@ -359,7 +298,6 @@ class ChatWidget {
         return new Promise(res => this._drainResolvers.push(res));
     }
 
-    // ---------- Apply remote config ----------
     applyRemoteConfig(raw){
         const cfg={
             avatar_url:         this._normalize(raw?.avatar_url,         this.DEFAULTS.avatar_url),
@@ -421,7 +359,6 @@ class ChatWidget {
         }
     }
 
-    // ---------- Preload from n8n (POST) ----------
     async preloadChatData(){
         try{
             if (!this._sessionJustCreated) {
@@ -434,7 +371,6 @@ class ChatWidget {
                     } catch {}
                 }
             }
-
             const res = await fetch(this.CONFIG_WEBHOOK, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -444,16 +380,13 @@ class ChatWidget {
                 })
             });
             if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
-
             const data = await res.json();
             try { this.lsSet(this.KEY_CONFIG, JSON.stringify(data)); } catch {}
             this.applyRemoteConfig(data);
-
         } catch (_err){
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
             this.configLoaded = true;
             this.revealWidget();
-
             const alreadyWelcomed=this.lsGet(this.KEY_WELCOME)==="true";
             const hasHistory=(this.lsGet(this.KEY_HISTORY)||"[]")!=="[]";
             if(!alreadyWelcomed && !hasHistory){
@@ -463,7 +396,6 @@ class ChatWidget {
         }
     }
 
-    // ---------- Open / Close ----------
     async toggleChat(){ return this.isOpen ? this.closeChat() : this.openChat(); }
 
     async openChat(){
@@ -471,20 +403,16 @@ class ChatWidget {
         const container=document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
-
         this.lsSet(this.KEY_OPEN,'true');
         this.postChannel({ type:"openState", value:true });
-
         this.hideTooltip();
         this.restoreChatHistory();
-
         setTimeout(()=> document.getElementById('chatInput')?.focus(), 300);
     }
 
     closeChat(){
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
-
         this.lsSet(this.KEY_OPEN,'false');
         this.postChannel({ type:"openState", value:false });
     }
@@ -497,27 +425,24 @@ class ChatWidget {
         }
     }
 
-    // ---------- Messaging (STREAMING NDJSON; per woord) ----------
     async sendMessage(){
         const input=document.getElementById('chatInput');
         const message=input?.value.trim();
         if(!message) return;
 
-        // Save user message
         this.addMessage('user', message);
         if(input) input.value='';
         const sendBtn=document.getElementById('chatSend');
         if(sendBtn) sendBtn.disabled=true;
 
-        // Cancel any in-flight stream
         if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
 
-        // Loader tonen
         this.showTypingIndicator();
         let firstTokenQueued = false;
         this._streamBuf = "";
         this._lastFullText = "";
         this._wordQueue.length = 0;
+        this.lastBotMessage = null;
 
         const ac = new AbortController();
         this._currentAbort = ac;
@@ -558,22 +483,17 @@ class ChatWidget {
                     try {
                         const obj = JSON.parse(trimmed);
                         if (obj.type === "item" && typeof obj.content === "string" && obj.content.length) {
-                            // queue tokens
                             this._enqueueStream(obj.content, false);
-
                             if (!firstTokenQueued && (this._wordQueue.length > 0 || this._streamBuf.length > 0)) {
-                                this.hideTypingIndicator(); // DIRECT loader weg bij eerste content
+                                this.hideTypingIndicator();
                                 if (!this.lastBotMessage) this.lastBotMessage = this.addMessage('bot', '', true);
                                 firstTokenQueued = true;
                             }
                         }
-                    } catch (e) {
-                        console.warn("Kon NDJSON niet parsen:", line, e);
-                    }
+                    } catch {}
                 }
             }
 
-            // flush rest
             this._enqueueStream("", true);
 
             if (!firstTokenQueued && this._wordQueue.length === 0) {
@@ -581,10 +501,8 @@ class ChatWidget {
                 this.lastBotMessage = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
             }
 
-            // wacht tot alle tokens ge-renderd zijn
             await this._waitForWordPumpToDrain();
 
-            // final sanitize + persist
             if (this.lastBotMessage) {
                 const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
                 if (textEl) textEl.innerHTML = this._renderMarkup(this.lastBotMessage._rawStream || textEl.textContent || "");
@@ -602,14 +520,7 @@ class ChatWidget {
                 this.hideTypingIndicator();
                 this.lastBotMessage = this.addMessage('bot', '', true);
             }
-
-            if (err?.name === "AbortError") {
-                this._appendToLiveBubble(this.lastBotMessage, "\n\n⏹️ Verzoek afgebroken.");
-            } else {
-                console.error(err);
-                this._appendToLiveBubble(this.lastBotMessage, "Er ging iets mis.");
-            }
-
+            this._appendToLiveBubble(this.lastBotMessage, "Er ging iets mis.");
             const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
             if (textEl) textEl.innerHTML = this._renderMarkup(this.lastBotMessage._rawStream || textEl.textContent || "");
             this.saveMessageToSession({
@@ -617,14 +528,12 @@ class ChatWidget {
                 htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
                 timestamp: new Date().toISOString()
             });
-
         } finally {
             if(sendBtn) sendBtn.disabled=false;
             this._currentAbort = null;
         }
     }
 
-    // ---------- UI helpers ----------
     addMessage(type, htmlText, isRestoring = false) {
         const msg = document.createElement('div');
         msg.className = `chat-widget__message chat-widget__message--${type}`;
@@ -717,7 +626,6 @@ class ChatWidget {
         this.addMessage('bot',html);
     }
 
-    // ---------- Rendering helpers ----------
     _appendToLiveBubble(bubble, text){
         if(!bubble) return;
         bubble._rawStream = (bubble._rawStream || "") + text;
@@ -732,18 +640,12 @@ class ChatWidget {
         if (messages) messages.scrollTop = messages.scrollHeight;
     }
 
-    // ---- Live renderer: lijsten + markdown links + autolink + sanitizen ----
     _renderMarkup(text) {
-        // 1) Markdown-achtige lijsten -> echte <ul>/<ol>
         let htmlish = this._convertMarkdownLists(text);
-
-        // 2) Markdown links [tekst](url) -> <a>
         htmlish = htmlish.replace(
             /\[([^[\]]+)\]\(((?:https?:\/\/|www\.)[^\s)]+)\)/gi,
             (m, label, url) => `<a href="${url}">${label}</a>`
         );
-
-        // 3) Sanitize + autolink + linebreaks
         return this._sanitizeAndAutolink(htmlish);
     }
 
@@ -775,14 +677,12 @@ class ChatWidget {
                 continue;
             }
 
-            // lege regel sluit lopende lijsten
             if (!line.trim()) {
                 flushUL(); flushOL();
                 out += '\n';
                 continue;
             }
 
-            // normale tekstregel
             flushUL(); flushOL();
             out += line + '\n';
         }
@@ -796,7 +696,6 @@ class ChatWidget {
         const doc = parser.parseFromString(htmlish, 'text/html');
 
         const allowed = new Set(['A','UL','OL','LI','BR','B','STRONG','I','EM','CODE','PRE']);
-
         const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
 
         const sanitizeHref = (href) => {
@@ -851,9 +750,9 @@ class ChatWidget {
 
         const walk = (node) => {
             for (const child of [...node.childNodes]) {
-                if (child.nodeType === 3) { // text
+                if (child.nodeType === 3) {
                     autolinkTextNode(child);
-                } else if (child.nodeType === 1) { // element
+                } else if (child.nodeType === 1) {
                     const tag = child.tagName;
 
                     if (!allowed.has(tag)) {
@@ -893,13 +792,12 @@ class ChatWidget {
         return doc.body.innerHTML;
     }
 
-    // ---------- Persistence ----------
     saveMessageToSession(message){
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
         history.push(message);
         this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
         this.postChannel({ type:"historyChanged" });
-        this.lsSet(this.KEY_HISTORY, JSON.stringify(history)); // Safari quirk
+        this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
     }
 
     restoreChatHistory(){

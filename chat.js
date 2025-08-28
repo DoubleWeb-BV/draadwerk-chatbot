@@ -7,10 +7,6 @@ class ChatWidget {
 
         this._currentAbort = null;
         this._lastFullText = "";
-        this._streamBuf = "";
-        this._wordQueue = [];
-        this._wordPumpRunning = false;
-        this._drainResolvers = [];
 
         this.LS_PREFIX = "dwChat:";
         this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
@@ -131,7 +127,6 @@ class ChatWidget {
         this.bindEvents();
         this.setupBroadcastChannel();
         this.setupStorageSync();
-
         this.configReady=this.preloadChatData().catch(()=>{});
         this.configReady.finally(()=>{
             this.restoreOpenState();
@@ -235,67 +230,6 @@ class ChatWidget {
         if(typeof value!=="string") return fallback;
         const trimmed=value.trim();
         return trimmed.length ? trimmed : fallback;
-    }
-
-    _enqueueStream(text, isFinal=false){
-        this._streamBuf += String(text);
-        const lead = this._streamBuf.match(/^\s+/);
-        if (lead) {
-            this._wordQueue.push({ text: lead[0], word: null });
-            this._streamBuf = this._streamBuf.slice(lead[0].length);
-        }
-        const rx = /(\S+)(\s+)/g;
-        let m, consumed = 0;
-        while ((m = rx.exec(this._streamBuf)) !== null) {
-            const word = m[1];
-            const space = m[2];
-            this._wordQueue.push({ text: word + space, word });
-            consumed = rx.lastIndex;
-        }
-        if (consumed > 0) {
-            this._streamBuf = this._streamBuf.slice(consumed);
-        }
-        if (isFinal && this._streamBuf.length) {
-            const tail = this._streamBuf;
-            const tailWords = tail.match(/\S+/g) || [];
-            if (tailWords.length === 0) {
-                this._wordQueue.push({ text: tail, word: null });
-            } else {
-                this._wordQueue.push({ text: tail, word: tailWords[0] });
-            }
-            this._streamBuf = "";
-        }
-        if (!this._wordPumpRunning && this._wordQueue.length > 0) {
-            this._startWordPump();
-        }
-    }
-
-    _startWordPump(){
-        if (this._wordPumpRunning) return;
-        this._wordPumpRunning = true;
-        const step = () => {
-            if (this._wordQueue.length === 0) {
-                this._wordPumpRunning = false;
-                const resolvers = this._drainResolvers.splice(0);
-                resolvers.forEach(r => r());
-                return;
-            }
-            if (!this.lastBotMessage) {
-                this.lastBotMessage = this.addMessage('bot', '', true);
-            }
-            const token = this._wordQueue.shift();
-            if (token) {
-                this._appendToLiveBubble(this.lastBotMessage, token.text);
-                this._lastFullText += token.text;
-            }
-            requestAnimationFrame(step);
-        };
-        requestAnimationFrame(step);
-    }
-
-    _waitForWordPumpToDrain(){
-        if (!this._wordPumpRunning && this._wordQueue.length === 0) return Promise.resolve();
-        return new Promise(res => this._drainResolvers.push(res));
     }
 
     applyRemoteConfig(raw){
@@ -438,10 +372,7 @@ class ChatWidget {
         if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
 
         this.showTypingIndicator();
-        let firstTokenQueued = false;
-        this._streamBuf = "";
         this._lastFullText = "";
-        this._wordQueue.length = 0;
         this.lastBotMessage = null;
 
         const ac = new AbortController();
@@ -466,6 +397,7 @@ class ChatWidget {
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
+            let gotFirst = false;
 
             while(true){
                 const { done, value } = await reader.read();
@@ -483,29 +415,26 @@ class ChatWidget {
                     try {
                         const obj = JSON.parse(trimmed);
                         if (obj.type === "item" && typeof obj.content === "string" && obj.content.length) {
-                            this._enqueueStream(obj.content, false);
-                            if (!firstTokenQueued && (this._wordQueue.length > 0 || this._streamBuf.length > 0)) {
+                            if (!gotFirst) {
                                 this.hideTypingIndicator();
-                                if (!this.lastBotMessage) this.lastBotMessage = this.addMessage('bot', '', true);
-                                firstTokenQueued = true;
+                                this.lastBotMessage = this.addMessage('bot', '', true);
+                                gotFirst = true;
                             }
+                            this._appendToLiveBubble(this.lastBotMessage, obj.content);
+                            this._lastFullText += obj.content;
                         }
                     } catch {}
                 }
             }
 
-            this._enqueueStream("", true);
-
-            if (!firstTokenQueued && this._wordQueue.length === 0) {
+            if (!gotFirst) {
                 this.hideTypingIndicator();
                 this.lastBotMessage = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
             }
 
-            await this._waitForWordPumpToDrain();
-
             if (this.lastBotMessage) {
                 const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
-                if (textEl) textEl.innerHTML = this._renderMarkup(this.lastBotMessage._rawStream || textEl.textContent || "");
+                if (textEl) textEl.innerHTML = this._sanitizeHTML(this.lastBotMessage._rawStream || textEl.textContent || "");
                 this.saveMessageToSession({
                     type: 'bot',
                     htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
@@ -522,7 +451,7 @@ class ChatWidget {
             }
             this._appendToLiveBubble(this.lastBotMessage, "Er ging iets mis.");
             const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
-            if (textEl) textEl.innerHTML = this._renderMarkup(this.lastBotMessage._rawStream || textEl.textContent || "");
+            if (textEl) textEl.innerHTML = this._sanitizeHTML(this.lastBotMessage._rawStream || textEl.textContent || "");
             this.saveMessageToSession({
                 type: 'bot',
                 htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
@@ -635,67 +564,16 @@ class ChatWidget {
     _renderStreamInto(bubble, rawText) {
         const textEl = bubble.querySelector('.chat-widget__message-text');
         if (!textEl) return;
-        textEl.innerHTML = this._renderMarkup(rawText);
+        textEl.innerHTML = this._sanitizeHTML(rawText);
         const messages = document.getElementById('chatMessages');
         if (messages) messages.scrollTop = messages.scrollHeight;
     }
 
-    _renderMarkup(text) {
-        let htmlish = this._convertMarkdownLists(text);
-        htmlish = htmlish.replace(
-            /\[([^[\]]+)\]\(((?:https?:\/\/|www\.)[^\s)]+)\)/gi,
-            (m, label, url) => `<a href="${url}">${label}</a>`
-        );
-        return this._sanitizeAndAutolink(htmlish);
-    }
-
-    _convertMarkdownLists(text) {
-        const lines = text.split('\n');
-        let out = '';
-        let inUL = false;
-        let inOL = false;
-
-        const flushUL = () => { if (inUL) { out += '</ul>'; inUL = false; } };
-        const flushOL = () => { if (inOL) { out += '</ol>'; inOL = false; } };
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-
-            const ulMatch = /^\s*[-*•]\s+(.+)$/.exec(line);
-            const olMatch = /^\s*\d+\.\s+(.+)$/.exec(line);
-
-            if (ulMatch) {
-                if (inOL) flushOL();
-                if (!inUL) { out += '<ul>'; inUL = true; }
-                out += `<li>${ulMatch[1]}</li>`;
-                continue;
-            }
-            if (olMatch) {
-                if (inUL) flushUL();
-                if (!inOL) { out += '<ol>'; inOL = true; }
-                out += `<li>${olMatch[1]}</li>`;
-                continue;
-            }
-
-            if (!line.trim()) {
-                flushUL(); flushOL();
-                out += '\n';
-                continue;
-            }
-
-            flushUL(); flushOL();
-            out += line + '\n';
-        }
-
-        flushUL(); flushOL();
-        return out;
-    }
-
-    _sanitizeAndAutolink(htmlish) {
+    _sanitizeHTML(htmlish) {
         const parser = new DOMParser();
-        const doc = parser.parseFromString(htmlish, 'text/html');
+        const doc = parser.parseFromString(String(htmlish), 'text/html');
 
-        const allowed = new Set(['A','UL','OL','LI','BR','B','STRONG','I','EM','CODE','PRE']);
+        const allowed = new Set(['A','P','UL','OL','LI','BR','B','STRONG','I','EM','CODE','PRE']);
         const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
 
         const sanitizeHref = (href) => {
@@ -710,14 +588,6 @@ class ChatWidget {
             return '';
         };
 
-        const appendTextWithBreaks = (frag, text) => {
-            const parts = String(text).split('\n');
-            for (let i = 0; i < parts.length; i++) {
-                if (parts[i]) frag.appendChild(doc.createTextNode(parts[i]));
-                if (i < parts.length - 1) frag.appendChild(doc.createElement('br'));
-            }
-        };
-
         const autolinkTextNode = (node) => {
             const txt = node.nodeValue;
             let last = 0;
@@ -725,7 +595,7 @@ class ChatWidget {
 
             txt.replace(urlRegex, (m, _u, idx) => {
                 const before = txt.slice(last, idx);
-                if (before) appendTextWithBreaks(frag, before);
+                if (before) frag.appendChild(doc.createTextNode(before));
 
                 const a = doc.createElement('a');
                 const safe = sanitizeHref(m);
@@ -736,14 +606,14 @@ class ChatWidget {
                     a.textContent = m;
                     frag.appendChild(a);
                 } else {
-                    appendTextWithBreaks(frag, m);
+                    frag.appendChild(doc.createTextNode(m));
                 }
                 last = idx + m.length;
                 return m;
             });
 
             const rest = txt.slice(last);
-            if (rest) appendTextWithBreaks(frag, rest);
+            if (rest) frag.appendChild(doc.createTextNode(rest));
 
             node.parentNode.replaceChild(frag, node);
         };

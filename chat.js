@@ -1,12 +1,12 @@
 class ChatWidget {
-    constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
+    constructor(webhookURL, sessionId = null, userId, websiteId) {
         this.webhookURL = webhookURL;
         this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
         this.userId = userId;
         this.websiteId = websiteId;
 
         this._currentAbort = null;
-        this._lastFullText = "";
+        this._rawHTMLStream = "";
 
         this.LS_PREFIX = "dwChat:";
         this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
@@ -372,7 +372,7 @@ class ChatWidget {
         if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
 
         this.showTypingIndicator();
-        this._lastFullText = "";
+        this._rawHTMLStream = "";
         this.lastBotMessage = null;
 
         const ac = new AbortController();
@@ -420,8 +420,8 @@ class ChatWidget {
                                 this.lastBotMessage = this.addMessage('bot', '', true);
                                 gotFirst = true;
                             }
-                            this._appendToLiveBubble(this.lastBotMessage, obj.content);
-                            this._lastFullText += obj.content;
+                            this._rawHTMLStream += obj.content;
+                            this._renderStreamInto(this.lastBotMessage, this._rawHTMLStream);
                         }
                     } catch {}
                 }
@@ -434,7 +434,7 @@ class ChatWidget {
 
             if (this.lastBotMessage) {
                 const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
-                if (textEl) textEl.innerHTML = this._sanitizeHTML(this.lastBotMessage._rawStream || textEl.textContent || "");
+                if (textEl) textEl.innerHTML = this._sanitizeHTML(this._rawHTMLStream || textEl.innerHTML || "");
                 this.saveMessageToSession({
                     type: 'bot',
                     htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
@@ -449,9 +449,9 @@ class ChatWidget {
                 this.hideTypingIndicator();
                 this.lastBotMessage = this.addMessage('bot', '', true);
             }
-            this._appendToLiveBubble(this.lastBotMessage, "Er ging iets mis.");
+            this._appendToLiveBubbleHTML(this.lastBotMessage, "<p>Er ging iets mis.</p>");
             const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
-            if (textEl) textEl.innerHTML = this._sanitizeHTML(this.lastBotMessage._rawStream || textEl.textContent || "");
+            if (textEl) textEl.innerHTML = this._sanitizeHTML(this._rawHTMLStream || textEl.innerHTML || "");
             this.saveMessageToSession({
                 type: 'bot',
                 htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
@@ -490,7 +490,6 @@ class ChatWidget {
         if (!isRestoring) {
             this.saveMessageToSession({ type, htmlText, timestamp: timestamp.toISOString() });
         }
-
         return msg;
     }
 
@@ -507,10 +506,7 @@ class ChatWidget {
         messages?.appendChild(indicator);
         if(messages) messages.scrollTop = messages.scrollHeight;
     }
-
-    hideTypingIndicator(){
-        document.getElementById('typingIndicator')?.remove();
-    }
+    hideTypingIndicator(){ document.getElementById('typingIndicator')?.remove(); }
 
     handleFeedback(isUseful){
         const thumbsUp=document.getElementById('thumbsUp');
@@ -555,25 +551,30 @@ class ChatWidget {
         this.addMessage('bot',html);
     }
 
-    _appendToLiveBubble(bubble, text){
+    _appendToLiveBubbleHTML(bubble, html){
         if(!bubble) return;
-        bubble._rawStream = (bubble._rawStream || "") + text;
-        this._renderStreamInto(bubble, bubble._rawStream);
-    }
-
-    _renderStreamInto(bubble, rawText) {
+        bubble._rawStream = (bubble._rawStream || "") + String(html);
         const textEl = bubble.querySelector('.chat-widget__message-text');
         if (!textEl) return;
-        textEl.innerHTML = this._sanitizeHTML(rawText);
+        textEl.innerHTML = this._sanitizeHTML(bubble._rawStream);
         const messages = document.getElementById('chatMessages');
         if (messages) messages.scrollTop = messages.scrollHeight;
+    }
+
+    _renderStreamInto(bubble, rawHTML) {
+        const textEl = bubble.querySelector('.chat-widget__message-text');
+        if (!textEl) return;
+        textEl.innerHTML = this._sanitizeHTML(rawHTML);
+        const messages = document.getElementById('chatMessages');
+        if (messages) messages.scrollTop = messages.scrollHeight;
+        bubble._rawStream = rawHTML;
     }
 
     _sanitizeHTML(htmlish) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(String(htmlish), 'text/html');
 
-        const allowed = new Set(['A','P','UL','OL','LI','BR','B','STRONG','I','EM','CODE','PRE']);
+        const allowed = new Set(['A','P','UL','OL','LI','BR','B','STRONG','I','EM','CODE','PRE','H1','H2','H3','H4','H5','H6','BLOCKQUOTE']);
         const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
 
         const sanitizeHref = (href) => {

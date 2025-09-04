@@ -29,11 +29,21 @@
         console.warn("[Chatbot Loader] 'data-website-id' ontbreekt. chat.js zal null posten.");
     }
 
-    // 5) Unieke sessie-id (1x per browser)
+    // Helper: maak (v4) UUID string als fallback wanneer crypto.randomUUID ontbreekt
+    const makeUuidV4 = () =>
+        'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+
+    // 5) Unieke sessie-id (1x per browser) — nu als ECHTE UUID
     const LS_KEY = "dwChat:sessionId";
     let sessionId = localStorage.getItem(LS_KEY);
     if (!sessionId) {
-        sessionId = "session-" + Date.now() + "-" + Math.random().toString(36).slice(2, 11);
+        sessionId = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+            ? crypto.randomUUID()
+            : makeUuidV4();
         localStorage.setItem(LS_KEY, sessionId);
     }
 
@@ -67,7 +77,7 @@
         if (typeof ChatWidget !== "undefined") {
             new ChatWidget(
                 streamWebhook,           // 1: streaming webhook (NDJSON)
-                sessionId,               // 2: sessionId
+                sessionId,               // 2: sessionId (UUID)
                 userId,                  // 3: userId (optioneel, chat.js stuurt dit NIET naar config)
                 websiteId,               // 4: websiteId  ✅ BELANGRIJK
                 { typeDelayMs, charsPerTick } // 5: typing FX

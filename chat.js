@@ -1,7 +1,8 @@
 class ChatWidget {
     constructor(webhookURL, sessionId = null, userId, websiteId) {
         this.webhookURL = webhookURL;
-        this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
+        // FIX: verwijderde de extra 'g' aan het einde van de UUID in de URL
+        this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526";
         this.userId = userId;
         this.websiteId = websiteId;
 
@@ -67,12 +68,14 @@ class ChatWidget {
         this.init();
     }
 
+    // ===== Storage =====
     lsGet(k){ return localStorage.getItem(k); }
     lsSet(k,v){ localStorage.setItem(k,v); }
     lsRemove(k){ localStorage.removeItem(k); }
     ssGet(k){ return sessionStorage.getItem(k); }
     ssSet(k,v){ sessionStorage.setItem(k,v); }
 
+    // ===== UI visibility =====
     ensureHidden(){
         const root=document.getElementById('chat-widget');
         if(root){ root.setAttribute('data-ready','0'); root.style.visibility='hidden'; root.style.opacity='0'; }
@@ -82,6 +85,7 @@ class ChatWidget {
         if(root){ root.setAttribute('data-ready','1'); root.style.visibility='visible'; root.style.opacity='1'; }
     }
 
+    // ===== Tab/session boot =====
     adoptOrCreateTabId(){
         let tabId=this.ssGet(this.SS_TAB_ID);
         if(!tabId){
@@ -114,18 +118,64 @@ class ChatWidget {
         this._heartbeat=setInterval(()=>{ if(!document.hidden) this.lsSet(this.KEY_LAST_SEEN,String(Date.now())); },2000);
     }
 
+    // ===== UUID helpers =====
+    _makeUuidV4(){
+        if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+            return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+    _looksLikeV4(uuid){
+        return typeof uuid === 'string'
+            && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
+    }
+
+    // ===== SessionId (nu echte UUID + migratie van oude keys) =====
     loadOrCreateSessionId(provided){
-        let sid=this.lsGet(this.KEY_SESSION_ID);
-        if(!sid){
-            sid=provided || ('session-'+Date.now()+'-'+Math.random().toString(36).substr(2,9));
-            this.lsSet(this.KEY_SESSION_ID,sid);
+        let sid = this.lsGet(this.KEY_SESSION_ID) || provided || null;
+
+        // Als meegegeven id geen geldige v4 is (oude "session-..." of iets anders), migreer naar nieuwe UUID
+        if (!sid || !this._looksLikeV4(sid)) {
+            const oldSid = sid;
+            sid = this._makeUuidV4();
+
+            // migreer lokale opslag (history/welcome/open/tooltip) van oude → nieuwe key
+            if (oldSid) {
+                const oldKeys = [
+                    `${this.LS_PREFIX}history:${oldSid}`,
+                    `${this.LS_PREFIX}welcome:${oldSid}`,
+                    `${this.LS_PREFIX}isOpen:${oldSid}`,
+                    `${this.LS_PREFIX}tooltipDismissed:${oldSid}`,
+                ];
+                const vals = oldKeys.map(k => this.lsGet(k));
+                // schrijf nieuwe sessionId en nieuwe keys
+                this.lsSet(this.KEY_SESSION_ID, sid);
+                const newKeys = [
+                    `${this.LS_PREFIX}history:${sid}`,
+                    `${this.LS_PREFIX}welcome:${sid}`,
+                    `${this.LS_PREFIX}isOpen:${sid}`,
+                    `${this.LS_PREFIX}tooltipDismissed:${sid}`,
+                ];
+                newKeys.forEach((nk,i)=>{ if (vals[i] !== null) this.lsSet(nk, vals[i]); });
+                // opruimen oude keys
+                oldKeys.forEach(k => this.lsRemove(k));
+            } else {
+                this.lsSet(this.KEY_SESSION_ID, sid);
+            }
             this._sessionJustCreated = true;
         } else {
+            // geldige UUID gevonden
+            this.lsSet(this.KEY_SESSION_ID, sid);
             this._sessionJustCreated = false;
         }
         return sid;
     }
 
+    // ===== Init =====
     init(){
         this.ensureHidden();
         this.bindEvents();
@@ -334,6 +384,7 @@ class ChatWidget {
         }
     }
 
+    // ===== Open/close =====
     async toggleChat(){ return this.isOpen ? this.closeChat() : this.openChat(); }
 
     async openChat(){
@@ -363,6 +414,7 @@ class ChatWidget {
         }
     }
 
+    // ===== Messaging & streaming =====
     async sendMessage(){
         const input=document.getElementById('chatInput');
         const message=input?.value.trim();
@@ -694,6 +746,7 @@ class ChatWidget {
         return doc.body.innerHTML;
     }
 
+    // ===== History =====
     saveMessageToSession(message){
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
         history.push(message);

@@ -57,7 +57,7 @@ class ChatWidget {
         this.channel = null;
 
         this.adoptOrCreateTabId();
-        this.maybeResetForNewBrowser();
+        this.maybeResetForNewBrowser(); // <- zal evt. sessionId vervangen (zie aangepaste versie)
         this.sessionId = this.loadOrCreateSessionId(sessionId);
 
         this.KEY_HISTORY = `${this.LS_PREFIX}history:${this.sessionId}`;
@@ -96,6 +96,8 @@ class ChatWidget {
             this._isBrandNewTab=false;
         }
     }
+
+    // AANGEPAST: bij nieuwe tab + > RESET_MS sinds lastSeen → oude sessie keys opruimen + NIEUWE sessionId genereren
     maybeResetForNewBrowser(){
         const lastSeen=parseInt(this.lsGet(this.KEY_LAST_SEEN)||"0",10);
         const now=Date.now();
@@ -107,11 +109,17 @@ class ChatWidget {
                 this.lsRemove(`${this.LS_PREFIX}isOpen:${sid}`);
                 this.lsRemove(`${this.LS_PREFIX}tooltipDismissed:${sid}`);
             }
+            // sessionId verwijderen en direct vernieuwen
             this.lsRemove(this.KEY_SESSION_ID);
+            const newSid = this._makeUuidV4();
+            this.lsSet(this.KEY_SESSION_ID, newSid);
+            this.sessionId = newSid;
+            this._sessionJustCreated = true;
         }
         this.lsSet(this.KEY_LAST_SEEN,String(now));
         this.installHeartbeat();
     }
+
     installHeartbeat(){
         document.addEventListener('visibilitychange',()=>this.lsSet(this.KEY_LAST_SEEN,String(Date.now())));
         window.addEventListener('pagehide',()=>this.lsSet(this.KEY_LAST_SEEN,String(Date.now())));

@@ -17,8 +17,7 @@
     const jsURL   = `${base}chat.js?ts=${ts}`;
 
     // 4) Lees data-attributen (websiteId is VERPLICHT voor jouw flow)
-    const streamWebhook = currentScript.dataset.streamWebhook
-        || "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
+    const streamWebhook = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
 
     const userId    = currentScript.dataset.userId || null;
     const websiteId = currentScript.dataset.websiteId || null; // <- MOET gevuld zijn

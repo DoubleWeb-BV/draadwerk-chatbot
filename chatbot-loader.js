@@ -19,7 +19,7 @@
     // 4) Read data-attributes (both webhooks can be overridden from HTML)
     const streamWebhook =
         currentScript.dataset.streamWebhook ||
-        "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
+        "https://workflows.draadwerk.nl/webhook/6d7815bf-da68-4e19-81c2-0575a091afba";
 
     const configWebhook =
         currentScript.dataset.configWebhook ||

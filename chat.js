@@ -1,8 +1,11 @@
 class ChatWidget {
-    constructor(webhookURL, sessionId = null, userId, websiteId) {
+    constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
         this.webhookURL = webhookURL;
-        // FIX: verwijderde de extra 'g' aan het einde van de UUID in de URL
-        this.CONFIG_WEBHOOK = "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526";
+        // Allow overriding the config webhook from the loader; default to production URL (with trailing "g")
+        this.CONFIG_WEBHOOK =
+            typingOpts.configWebhook ||
+            "https://workflows.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
+
         this.userId = userId;
         this.websiteId = websiteId;
 
@@ -57,7 +60,7 @@ class ChatWidget {
         this.channel = null;
 
         this.adoptOrCreateTabId();
-        this.maybeResetForNewBrowser(); // <- zal evt. sessionId vervangen (zie aangepaste versie)
+        this.maybeResetForNewBrowser();
         this.sessionId = this.loadOrCreateSessionId(sessionId);
 
         this.KEY_HISTORY = `${this.LS_PREFIX}history:${this.sessionId}`;
@@ -97,7 +100,7 @@ class ChatWidget {
         }
     }
 
-    // AANGEPAST: bij nieuwe tab + > RESET_MS sinds lastSeen → oude sessie keys opruimen + NIEUWE sessionId genereren
+    // new tab + idle long enough → reset local session + generate new UUID
     maybeResetForNewBrowser(){
         const lastSeen=parseInt(this.lsGet(this.KEY_LAST_SEEN)||"0",10);
         const now=Date.now();
@@ -109,7 +112,6 @@ class ChatWidget {
                 this.lsRemove(`${this.LS_PREFIX}isOpen:${sid}`);
                 this.lsRemove(`${this.LS_PREFIX}tooltipDismissed:${sid}`);
             }
-            // sessionId verwijderen en direct vernieuwen
             this.lsRemove(this.KEY_SESSION_ID);
             const newSid = this._makeUuidV4();
             this.lsSet(this.KEY_SESSION_ID, newSid);
@@ -142,16 +144,14 @@ class ChatWidget {
             && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
     }
 
-    // ===== SessionId (nu echte UUID + migratie van oude keys) =====
+    // ===== SessionId (migrate to real UUID v4) =====
     loadOrCreateSessionId(provided){
         let sid = this.lsGet(this.KEY_SESSION_ID) || provided || null;
 
-        // Als meegegeven id geen geldige v4 is (oude "session-..." of iets anders), migreer naar nieuwe UUID
         if (!sid || !this._looksLikeV4(sid)) {
             const oldSid = sid;
             sid = this._makeUuidV4();
 
-            // migreer lokale opslag (history/welcome/open/tooltip) van oude → nieuwe key
             if (oldSid) {
                 const oldKeys = [
                     `${this.LS_PREFIX}history:${oldSid}`,
@@ -160,7 +160,6 @@ class ChatWidget {
                     `${this.LS_PREFIX}tooltipDismissed:${oldSid}`,
                 ];
                 const vals = oldKeys.map(k => this.lsGet(k));
-                // schrijf nieuwe sessionId en nieuwe keys
                 this.lsSet(this.KEY_SESSION_ID, sid);
                 const newKeys = [
                     `${this.LS_PREFIX}history:${sid}`,
@@ -169,16 +168,15 @@ class ChatWidget {
                     `${this.LS_PREFIX}tooltipDismissed:${sid}`,
                 ];
                 newKeys.forEach((nk,i)=>{ if (vals[i] !== null) this.lsSet(nk, vals[i]); });
-                // opruimen oude keys
                 oldKeys.forEach(k => this.lsRemove(k));
             } else {
                 this.lsSet(this.KEY_SESSION_ID, sid);
             }
             this._sessionJustCreated = true;
         } else {
-            // geldige UUID gevonden
             this.lsSet(this.KEY_SESSION_ID, sid);
-            this._sessionJustCreated = false;
+            // do NOT overwrite a true flag
+            if (this._sessionJustCreated !== true) this._sessionJustCreated = false;
         }
         return sid;
     }
@@ -356,17 +354,8 @@ class ChatWidget {
     }
 
     async preloadChatData(){
+        // Always try network first; fall back to cache on failure
         try{
-            if (!this._sessionJustCreated) {
-                const cached = this.lsGet(this.KEY_CONFIG);
-                if (cached) {
-                    try {
-                        const cfg = JSON.parse(cached);
-                        this.applyRemoteConfig(cfg);
-                        return;
-                    } catch {}
-                }
-            }
             const res = await fetch(this.CONFIG_WEBHOOK, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -377,9 +366,18 @@ class ChatWidget {
             });
             if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
             const data = await res.json();
-            try { this.lsSet(this.KEY_CONFIG, JSON.stringify(data)); } catch {}
+            try { this.lsSet(this.KEY_CONFIG, JSON.stringify({data, savedAt: Date.now()})); } catch {}
             this.applyRemoteConfig(data);
-        } catch (_err){
+        } catch (err){
+            console.warn("[ChatWidget] Config fetch failed, using cache/defaults:", err);
+            const cachedRaw = this.lsGet(this.KEY_CONFIG);
+            if (cachedRaw) {
+                try {
+                    const { data } = JSON.parse(cachedRaw);
+                    this.applyRemoteConfig(data);
+                    return;
+                } catch {}
+            }
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
             this.configLoaded = true;
             this.revealWidget();
@@ -700,6 +698,7 @@ class ChatWidget {
                     a.setAttribute('href', safe);
                     a.setAttribute('target', '_blank');
                     a.setAttribute('rel', 'noopener noreferrer');
+                    a.setAttribute('aria-label', '(opent in een nieuw tabblad)');
                     a.textContent = m;
                     frag.appendChild(a);
                 } else {
@@ -736,9 +735,10 @@ class ChatWidget {
                         child.setAttribute('href', safe);
                         child.setAttribute('target', '_blank');
                         child.setAttribute('rel', 'noopener noreferrer');
+                        child.setAttribute('aria-label', '(opent in een nieuw tabblad)');
                         for (const attr of [...child.attributes]) {
                             const name = attr.name.toLowerCase();
-                            if (!['href','target','rel'].includes(name)) child.removeAttribute(attr.name);
+                            if (!['href','target','rel','aria-label'].includes(name)) child.removeAttribute(attr.name);
                         }
                     } else {
                         for (const attr of [...child.attributes]) child.removeAttribute(attr.name);

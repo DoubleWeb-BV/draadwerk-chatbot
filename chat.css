@@ -29,6 +29,11 @@
     margin-block-start: 0;
 }
 
+.chat-widget__message-text > p, .chat-widget__message-text > ul {
+    padding-bottom: 10px;
+    margin-bottom: 0;
+}
+
 #chat-widget .chat-widget__message-text > :last-child {
     padding-bottom: 0;
     margin-block-end: 0;

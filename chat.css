@@ -221,15 +221,12 @@
     transition: background 0.2s ease;
 }
 
-#chat-widget .chat-widget__close:hover {
-    background: rgba(255,255,255,0.1);
-}
-
 /* Feedback knoppen */
 #chat-widget #thumbsUp:hover {
     background-color: #4caf50;
     color: white;
     cursor: pointer;
+    text-decoration: none;
 }
 
 #chat-widget #thumbsUp.chat-widget__feedback-btn--active {
@@ -241,6 +238,7 @@
     background-color: #ff7b61;
     color: white;
     cursor: pointer;
+    text-decoration: none;
 }
 
 #chat-widget #thumbsDown.chat-widget__feedback-btn--active {
@@ -289,7 +287,7 @@
 
 #chat-widget .chat-widget__message--bot {
     background: white;
-    color: var(--primary-color);
+    color: black;
     align-self: flex-start;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
@@ -453,6 +451,7 @@
 #chat-widget .chat-widget__contact-btn:hover {
     background-color: var(--secondary-color);
     transform: translateY(-1px);
+    text-decoration: none;
 }
 
 #chat-widget .chat-widget__send:disabled {

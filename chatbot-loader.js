@@ -1,46 +1,45 @@
-// chatbot-loader.js (compact + centralized URLs via data-attributes)
+// chatbot-loader.js
 (async function () {
     const ts = Date.now();
 
-    // 1) Current script
     const currentScript = document.currentScript || [...document.scripts].pop();
 
-    // 2) Version from jsDelivr URL (falls back to "latest")
     const src = currentScript.src || "";
     const m = src.match(/@([^/]+)\/chatbot-loader\.js/);
     const version = m ? m[1] : "latest";
     const base = `https://cdn.jsdelivr.net/gh/DoubleWeb-BV/draadwerk-chatbot@${version}/`;
 
-    // 3) Assets
     const cssURL  = `${base}chat.css?ts=${ts}`;
     const htmlURL = `${base}chat.html?ts=${ts}`;
     const jsURL   = `${base}chat.js?ts=${ts}`;
 
-    // 4) Read data-attributes (both webhooks can be overridden from HTML)
+    // ---- Config ----
     const streamWebhook =
         currentScript.dataset.streamWebhook ||
-        "https://n8n.draadwerk.nl/webhook/6d7815bf-da68-4e19-81c2-0575a091afba";
+        "https://n8n.draadwerk.nl/webhook/504ddb9d-465f-4d0a-9252-1547b851e5a8";
 
     const configWebhook =
         currentScript.dataset.configWebhook ||
         "https://n8n.draadwerk.nl/webhook/fdfc5f47-4bf7-4681-9d5e-ed91ae318526g";
 
     const userId       = currentScript.dataset.userId || null;
-    const websiteId    = currentScript.dataset.websiteId || null; // required by your backend
+    const websiteId    = currentScript.dataset.websiteId || null;
     const typeDelayMs  = Number(currentScript.dataset.typeDelayMs)  || 8;
     const charsPerTick = Number(currentScript.dataset.charsPerTick) || 2;
 
-    if (!websiteId) {
-        console.warn("[Chatbot Loader] 'data-website-id' ontbreekt. chat.js zal null posten.");
-    }
+    // ---- NEW: detect language ----
+    const lang =
+        currentScript.dataset.lang ||
+        document.documentElement.lang ||
+        "nl";
 
-    // 5) Persistent session UUID (one per browser)
+    // ---- Session UUID ----
     const LS_KEY = "dwChat:sessionId";
     let sessionId = localStorage.getItem(LS_KEY);
+
     if (!sessionId) {
-        sessionId = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
-            ? crypto.randomUUID()
-            : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        sessionId = (crypto?.randomUUID?.()) ||
+            'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
                 const r = Math.random() * 16 | 0;
                 const v = c === 'x' ? r : (r & 0x3 | 0x8);
                 return v.toString(16);
@@ -65,7 +64,7 @@
         wrapper.innerHTML = html;
         document.body.appendChild(wrapper);
 
-        // JS (chat.js)
+        // JS
         await new Promise((resolve, reject) => {
             const s = document.createElement("script");
             s.src = jsURL;
@@ -74,14 +73,19 @@
             document.body.appendChild(s);
         });
 
-        // 6) Boot ChatWidget
+        // Boot ChatWidget
         if (typeof ChatWidget !== "undefined") {
             new ChatWidget(
-                streamWebhook,           // 1: streaming webhook (NDJSON)
-                sessionId,               // 2: sessionId (UUID)
-                userId,                  // 3: userId (optional)
-                websiteId,               // 4: websiteId (required by your config flow)
-                { typeDelayMs, charsPerTick, configWebhook } // 5: options incl. centralized config webhook
+                streamWebhook,
+                sessionId,
+                userId,
+                websiteId,
+                {
+                    typeDelayMs,
+                    charsPerTick,
+                    configWebhook,
+                    lang   // << NEW
+                }
             );
         } else {
             console.error("[Chatbot Loader] ChatWidget niet gevonden.");

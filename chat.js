@@ -6,7 +6,7 @@ class ChatWidget {
         // Allow overriding the config webhook from the loader; default to production URL (with trailing "g")
         this.CONFIG_WEBHOOK =
             typingOpts.configWebhook ||
-            "https://n8n.draadwerk.nl/webhook-test/504ddb9d-465f-4d0a-9252-1547b851e5a8";
+            "https://n8n.draadwerk.nl/webhook/504ddb9d-465f-4d0a-9252-1547b851e5a8";
 
         this.userId = userId;
         this.websiteId = websiteId;

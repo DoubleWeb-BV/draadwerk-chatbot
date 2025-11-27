@@ -73,8 +73,10 @@
             document.body.appendChild(s);
         });
 
+
         // Boot ChatWidget
         if (typeof ChatWidget !== "undefined") {
+
             new ChatWidget(
                 streamWebhook,
                 sessionId,
@@ -84,9 +86,11 @@
                     typeDelayMs,
                     charsPerTick,
                     configWebhook,
-                    lang   // << NEW
+                    lang
                 }
             );
+
+        );
         } else {
             console.error("[Chatbot Loader] ChatWidget niet gevonden.");
         }

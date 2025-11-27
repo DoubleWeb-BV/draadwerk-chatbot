@@ -1,5 +1,7 @@
 class ChatWidget {
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
+        this.lang = typingOpts.lang || "nl";
+
         this.webhookURL = webhookURL;
         // Allow overriding the config webhook from the loader; default to production URL (with trailing "g")
         this.CONFIG_WEBHOOK =
@@ -421,17 +423,21 @@ class ChatWidget {
     }
 
     // ===== Messaging & streaming =====
-    async sendMessage(){
-        const input=document.getElementById('chatInput');
-        const message=input?.value.trim();
-        if(!message) return;
+    async sendMessage() {
+        const input = document.getElementById('chatInput');
+        const message = input?.value.trim();
+        if (!message) return;
 
         this.addMessage('user', message);
-        if(input) input.value='';
-        const sendBtn=document.getElementById('chatSend');
-        if(sendBtn) sendBtn.disabled=true;
 
-        if(this._currentAbort){ try{ this._currentAbort.abort(); }catch{} this._currentAbort=null; }
+        if (input) input.value = '';
+        const sendBtn = document.getElementById('chatSend');
+        if (sendBtn) sendBtn.disabled = true;
+
+        if (this._currentAbort) {
+            try { this._currentAbort.abort(); } catch {}
+            this._currentAbort = null;
+        }
 
         this.showTypingIndicator();
         this._rawHTMLStream = "";
@@ -442,19 +448,20 @@ class ChatWidget {
         const ac = new AbortController();
         this._currentAbort = ac;
 
-        try{
+        try {
             const res = await fetch(this.webhookURL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     message,
                     sessionId: this.sessionId,
-                    websiteId: this.websiteId
+                    websiteId: this.websiteId,
+                    lang: this.lang     // <-- NEW
                 }),
                 signal: ac.signal
             });
 
-            if(!res.ok || !res.body){
+            if (!res.ok || !res.body) {
                 throw new Error(`Netwerkfout of geen stream body (status ${res.status})`);
             }
 
@@ -463,7 +470,7 @@ class ChatWidget {
             let buffer = "";
             let gotFirst = false;
 
-            while(true){
+            while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
@@ -476,9 +483,13 @@ class ChatWidget {
                 for (const line of lines) {
                     const trimmed = line.trim();
                     if (!trimmed) continue;
+
                     try {
                         const obj = JSON.parse(trimmed);
-                        if (obj.type === "item" && typeof obj.content === "string" && obj.content.length) {
+                        if (obj.type === "item" &&
+                            typeof obj.content === "string" &&
+                            obj.content.length
+                        ) {
                             if (!gotFirst) {
                                 this.hideTypingIndicator();
                                 this.lastBotMessage = this.addMessage('bot', '', true);
@@ -497,12 +508,18 @@ class ChatWidget {
                 this.lastBotMessage = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
             } else if (this.lastBotMessage) {
                 const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
-                if (textEl) textEl.innerHTML = this._sanitizeHTML(this._rawHTMLStream || textEl.innerHTML || "");
+                if (textEl)
+                    textEl.innerHTML = this._sanitizeHTML(
+                        this._rawHTMLStream || textEl.innerHTML || ""
+                    );
+
                 this.saveMessageToSession({
                     type: 'bot',
-                    htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
+                    htmlText: this.lastBotMessage
+                        .querySelector('.chat-widget__message-text')?.innerHTML || '',
                     timestamp: new Date().toISOString()
                 });
+
                 document.getElementById('thumbsUp')?.removeAttribute('disabled');
                 document.getElementById('thumbsDown')?.removeAttribute('disabled');
             }
@@ -512,20 +529,29 @@ class ChatWidget {
                 this.hideTypingIndicator();
                 this.lastBotMessage = this.addMessage('bot', '', true);
             }
+
             this._appendToken("<p>Er ging iets mis.</p>");
             await this._waitForPumpDrain();
+
             const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
-            if (textEl) textEl.innerHTML = this._sanitizeHTML(this._rawHTMLStream || textEl.innerHTML || "");
+            if (textEl)
+                textEl.innerHTML = this._sanitizeHTML(
+                    this._rawHTMLStream || textEl.innerHTML || ""
+                );
+
             this.saveMessageToSession({
                 type: 'bot',
-                htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
+                htmlText: this.lastBotMessage
+                    .querySelector('.chat-widget__message-text')?.innerHTML || '',
                 timestamp: new Date().toISOString()
             });
+
         } finally {
-            if(sendBtn) sendBtn.disabled=false;
+            if (sendBtn) sendBtn.disabled = false;
             this._currentAbort = null;
         }
     }
+
 
     _enqueueHTMLTokens(str){
         if (!str) return;

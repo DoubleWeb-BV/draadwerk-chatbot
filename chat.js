@@ -363,8 +363,10 @@ class ChatWidget {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     websiteId: this.websiteId || null,
-                    sessionId: this.sessionId || null
+                    sessionId: this.sessionId || null,
+                    lang: this.lang
                 })
+
             });
             if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
             const data = await res.json();

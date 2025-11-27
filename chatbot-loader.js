@@ -90,10 +90,10 @@
                 }
             );
 
-        );
         } else {
             console.error("[Chatbot Loader] ChatWidget niet gevonden.");
         }
+
     } catch (err) {
         console.error("[Chatbot Loader] Fout bij laden:", err);
     }

@@ -233,17 +233,20 @@ class ChatWidget {
         );
         // Buttons die een vraag invullen + chat openen
         // Elements with chat="Vraag..."
+        // Elements with chat="Vraag..."
         document.querySelectorAll("[chat]").forEach(el => {
 
-            // Geef pointer cursor
             el.style.cursor = "pointer";
 
             el.addEventListener("click", (e) => {
-                // voorkom navigatie bij <a>
                 e.preventDefault();
 
-                // Haal de vraag uit het attribuut
                 const question = el.getAttribute("chat");
+
+                // Alleen deze 2 waarden opslaan
+                this._chatTriggerMeta = {
+                    page: window.location.href
+                };
 
                 if (question) {
                     this.prefillAndOpen(question);
@@ -402,10 +405,20 @@ class ChatWidget {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    websiteId: this.websiteId || null,
-                    sessionId: this.sessionId || null,
-                    lang: this.lang
-                })
+                    message,
+                    sessionId: this.sessionId,
+                    websiteId: this.websiteId,
+                    lang: this.lang,
+
+                    // ⭐ Alleen deze 2 waarden meesturen
+                    ...(this._chatTriggerMeta ? {
+                        meta: {
+                            question: this._chatTriggerMeta.question,
+                            page: this._chatTriggerMeta.page
+                        }
+                    } : {})
+                }),
+
 
             });
             if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
@@ -591,6 +604,7 @@ class ChatWidget {
         } finally {
             if (sendBtn) sendBtn.disabled = false;
             this._currentAbort = null;
+            this._chatTriggerMeta = null;
         }
     }
 

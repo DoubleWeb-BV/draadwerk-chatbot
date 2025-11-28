@@ -232,7 +232,7 @@ class ChatWidget {
             window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN,String(Date.now())), {passive:true})
         );
         // Buttons die een vraag invullen + chat openen
-        document.querySelectorAll("[data-chat-question]").forEach(btn => {
+        document.querySelectorAll("[chat]").forEach(btn => {
             btn.addEventListener("click", () => {
                 const question = btn.dataset.chatQuestion;
                 this.prefillAndOpen(question);
@@ -240,13 +240,7 @@ class ChatWidget {
         });
 
     }
-    /**
-     * Open de chat en vul automatisch een vraag in.
-     * Te gebruiken door elementen met data-chat-question="..."
-     */
-    /**
-     * Open de chat, vul automatisch een vraag in en verstuur direct.
-     */
+
     prefillAndOpen(question) {
         if (!question || typeof question !== "string") return;
 

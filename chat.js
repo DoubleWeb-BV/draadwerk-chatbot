@@ -244,6 +244,9 @@ class ChatWidget {
      * Open de chat en vul automatisch een vraag in.
      * Te gebruiken door elementen met data-chat-question="..."
      */
+    /**
+     * Open de chat, vul automatisch een vraag in en verstuur direct.
+     */
     prefillAndOpen(question) {
         if (!question || typeof question !== "string") return;
 
@@ -251,15 +254,17 @@ class ChatWidget {
             const input = document.getElementById("chatInput");
             if (!input) return;
 
+            // Vraag invullen
             input.value = question;
 
             const chatSend = document.getElementById("chatSend");
             if (chatSend) chatSend.disabled = false;
 
-            // Optioneel: direct verzenden
-            // this.sendMessage();
+            // ⭐️ Direct versturen
+            this.sendMessage();
         });
     }
+
 
     setupBroadcastChannel(){
         if("BroadcastChannel" in window){

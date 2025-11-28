@@ -231,6 +231,34 @@ class ChatWidget {
         ['click','keydown','scroll','pointerdown'].forEach(evt =>
             window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN,String(Date.now())), {passive:true})
         );
+        // Buttons die een vraag invullen + chat openen
+        document.querySelectorAll("[data-chat-question]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const question = btn.dataset.chatQuestion;
+                this.prefillAndOpen(question);
+            });
+        });
+
+    }
+    /**
+     * Open de chat en vul automatisch een vraag in.
+     * Te gebruiken door elementen met data-chat-question="..."
+     */
+    prefillAndOpen(question) {
+        if (!question || typeof question !== "string") return;
+
+        this.openChat().then(() => {
+            const input = document.getElementById("chatInput");
+            if (!input) return;
+
+            input.value = question;
+
+            const chatSend = document.getElementById("chatSend");
+            if (chatSend) chatSend.disabled = false;
+
+            // Auto-send mogelijk (comment weghalen):
+            // this.sendMessage();
+        });
     }
 
     setupBroadcastChannel(){

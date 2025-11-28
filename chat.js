@@ -405,18 +405,10 @@ class ChatWidget {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    message,
-                    sessionId: this.sessionId,
-                    websiteId: this.websiteId,
+                    websiteId: this.websiteId || null,
+                    sessionId: this.sessionId || null,
                     lang: this.lang,
-
-                    // ⭐ Alleen deze 2 waarden meesturen
-                    ...(this._chatTriggerMeta ? {
-                        meta: {
-                            question: this._chatTriggerMeta.question,
-                            page: this._chatTriggerMeta.page
-                        }
-                    } : {})
+                    page: window.location.href
                 }),
 
 
@@ -511,7 +503,15 @@ class ChatWidget {
                     message,
                     sessionId: this.sessionId,
                     websiteId: this.websiteId,
-                    lang: this.lang     // <-- NEW
+                    lang: this.lang,
+
+                    // Always send current page
+                    page: window.location.href,
+
+                    // Only send clicked question if exists
+                    ...(this._chatTriggerMeta ? {
+                        question: this._chatTriggerMeta.question
+                    } : {})
                 }),
                 signal: ac.signal
             });

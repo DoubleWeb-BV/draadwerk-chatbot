@@ -232,21 +232,25 @@ class ChatWidget {
             window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN,String(Date.now())), {passive:true})
         );
         // Buttons die een vraag invullen + chat openen
+        // Elements with chat="Vraag..."
         document.querySelectorAll("[chat]").forEach(el => {
 
-            // Cursor pointer automatisch toepassen
+            // Geef pointer cursor
             el.style.cursor = "pointer";
 
             el.addEventListener("click", (e) => {
-                // voorkomt dat <a> naar een URL navigeert
+                // voorkom navigatie bij <a>
                 e.preventDefault();
 
-                const question = el.dataset.chatQuestion;
+                // Haal de vraag uit het attribuut
+                const question = el.getAttribute("chat");
+
                 if (question) {
                     this.prefillAndOpen(question);
                 }
             });
         });
+
 
     }
 

@@ -256,7 +256,7 @@ class ChatWidget {
             const chatSend = document.getElementById("chatSend");
             if (chatSend) chatSend.disabled = false;
 
-            // Auto-send mogelijk (comment weghalen):
+            // Optioneel: direct verzenden
             // this.sendMessage();
         });
     }

@@ -588,7 +588,6 @@
 
 /* Center position */
 #chat-widget .chat-widget__container--center {
-    opacity: 1;
     visibility: visible;
     width: 1000px;
     transform: translate(-50%, -50%);

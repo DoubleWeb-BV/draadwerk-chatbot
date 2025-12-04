@@ -578,3 +578,25 @@
 #chat-widget .chat-widget__messages::-webkit-scrollbar-thumb:hover {
     background: #ced4da;
 }
+
+/* Default / Right position */
+.chat-widget__container--right {
+    position: fixed;
+    bottom: 100px;
+    right: 20px;
+}
+
+/* Center position */
+.chat-widget__container--center {
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    right: auto;
+}
+
+/* Als de chat open is in center mode */
+.chat-widget__container--center.chat-widget__container--open {
+    left: 50%;
+    transform: translateX(-50%);
+}

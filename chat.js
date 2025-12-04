@@ -57,6 +57,7 @@ class ChatWidget {
             not_useful_text: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
             primary_color: "#022d1f",
             secondary_color: "#ff7b61",
+            chat_position: "right", // NEW: 'right' of 'center'
         };
 
         this.channel = null;
@@ -351,6 +352,7 @@ class ChatWidget {
             not_useful_text:    this._normalize(raw?.not_useful_text,    this.DEFAULTS.not_useful_text),
             primary_color:      this._normalize(raw?.primary_color,      this.DEFAULTS.primary_color),
             secondary_color:    this._normalize(raw?.secondary_color,    this.DEFAULTS.secondary_color),
+            chat_position:      this._normalize(raw?.chat_position,      this.DEFAULTS.chat_position), // NEW
         };
 
         this.texts = {
@@ -361,6 +363,7 @@ class ChatWidget {
         this.chatConfig = cfg;
 
         this.applyTheme(cfg.primary_color, cfg.secondary_color);
+        this.applyChatPosition(cfg.chat_position); // NEW: Apply position class
 
         const $ = (sel)=>document.querySelector(sel);
 
@@ -395,6 +398,20 @@ class ChatWidget {
             const html = cfg.opening_message.replace(/\n/g,"<br>");
             this.addMessage("bot", html);
             this.lsSet(this.KEY_WELCOME,"true");
+        }
+    }
+    applyChatPosition(position) {
+        const container = document.getElementById('chatContainer');
+        if (!container) return;
+
+        // Remove existing position classes
+        container.classList.remove('chat-widget__container--right', 'chat-widget__container--center');
+
+        // Add the appropriate position class
+        if (position === 'center') {
+            container.classList.add('chat-widget__container--center');
+        } else {
+            container.classList.add('chat-widget__container--right');
         }
     }
 

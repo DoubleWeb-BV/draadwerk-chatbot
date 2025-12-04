@@ -587,12 +587,18 @@
 }
 
 /* Center position */
-.chat-widget__container--center {
-    position: fixed;
-    bottom: 100px;
+#chat-widget .chat-widget__container--center {
+    opacity: 1;
+    visibility: visible;
+    width: 1000px;
+    transform: translate(-50%, -50%);
+    bottom: 0;
+    right: 0;
+    max-width: 90%;
+    height: 800px;
+    max-height: 90%;
+    top: 50%;
     left: 50%;
-    transform: translateX(-50%);
-    right: auto;
 }
 
 /* Als de chat open is in center mode */

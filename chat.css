@@ -41,6 +41,7 @@
 
 #chat-widget a {
     color: var(--secondary-color);
+    text-decoration: underline;
 }
 
 #chat-widget .chat-widget__button {

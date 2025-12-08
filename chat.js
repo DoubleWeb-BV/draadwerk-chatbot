@@ -1,45 +1,27 @@
 class ChatWidget {
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
         this.lang = typingOpts.lang || "nl";
-
-        // Chat endpoint (LLM / n8n chat workflow)
         this.webhookURL = webhookURL;
-
-        // 🔹 LOS analytics endpoint (n8n analytics workflow)
-        // - via typingOpts.analyticsWebhook instelbaar
-        // - fallback: zelfde als webhookURL als je niks meegeeft
-        this.analyticsWebhookURL =
-            typingOpts.analyticsWebhook ||
-            typingOpts.analyticsWebhookURL ||
-            webhookURL;
-
-        // Allow overriding the config webhook from the loader; default to production URL (with trailing "g")
-        this.CONFIG_WEBHOOK =
-            typingOpts.configWebhook ||
-            "https://n8n.draadwerk.nl/webhook/504ddb9d-465f-4d0a-9252-1547b851e5a8";
-
+        this.analyticsWebhookURL = typingOpts.analyticsWebhook || typingOpts.analyticsWebhookURL || webhookURL;
+        this.CONFIG_WEBHOOK = typingOpts.configWebhook || "https://n8n.draadwerk.nl/webhook/504ddb9d-465f-4d0a-9252-1547b851e5a8";
         this.userId = userId;
         this.websiteId = websiteId;
-
         this._currentAbort = null;
         this._rawHTMLStream = "";
         this._tokenQueue = [];
         this._pumpRunning = false;
         this._pendingTag = "";
         this._drainResolvers = [];
-
         this.LS_PREFIX = "dwChat:";
         this.KEY_SESSION_ID = this.LS_PREFIX + "sessionId";
-        this.KEY_HISTORY    = null;
-        this.KEY_WELCOME    = null;
-        this.KEY_OPEN       = null;
-        this.KEY_TOOLTIP    = null;
-        this.KEY_CONFIG     = `${this.LS_PREFIX}config:${this.websiteId || "default"}`;
-
-        this.SS_TAB_ID     = this.LS_PREFIX + "tabId";
+        this.KEY_HISTORY = null;
+        this.KEY_WELCOME = null;
+        this.KEY_OPEN = null;
+        this.KEY_TOOLTIP = null;
+        this.KEY_CONFIG = `${this.LS_PREFIX}config:${this.websiteId || "default"}`;
+        this.SS_TAB_ID = this.LS_PREFIX + "tabId";
         this.KEY_LAST_SEEN = this.LS_PREFIX + "lastSeen";
-        this.RESET_MS      = 4000;
-
+        this.RESET_MS = 4000;
         this.isOpen = false;
         this.lastBotMessage = null;
         this.chatRestored = false;
@@ -47,13 +29,11 @@ class ChatWidget {
         this.configLoaded = false;
         this.configReady = null;
         this._sessionJustCreated = false;
-
         this.texts = {
             success: "Dank je! Fijn dat ik je kon helpen. 😊",
             notUseful: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
             cta: "Neem direct contact met ons op via: <br><br>📞 Telefoon: 0000 - 000 000 <br>📧 E-mail: info@example.com",
         };
-
         this.DEFAULTS = {
             avatar_url: "",
             chatbot_name: "AI Assistent",
@@ -67,30 +47,22 @@ class ChatWidget {
             not_useful_text: "Sorry dat dit niet nuttig was. Kan ik je op een andere manier helpen?",
             primary_color: "#022d1f",
             secondary_color: "#ff7b61",
-            chat_position: "right", // NEW: 'right' of 'center'
+            chat_position: "right",
         };
-
         this.channel = null;
-
         this.adoptOrCreateTabId();
         this.maybeResetForNewBrowser();
         this.sessionId = this.loadOrCreateSessionId(sessionId);
-
         this.KEY_HISTORY = `${this.LS_PREFIX}history:${this.sessionId}`;
         this.KEY_WELCOME = `${this.LS_PREFIX}welcome:${this.sessionId}`;
-        this.KEY_OPEN    = `${this.LS_PREFIX}isOpen:${this.sessionId}`;
+        this.KEY_OPEN = `${this.LS_PREFIX}isOpen:${this.sessionId}`;
         this.KEY_TOOLTIP = `${this.LS_PREFIX}tooltipDismissed:${this.sessionId}`;
-
         this.init();
     }
 
-    // ===== Analytics helper =====
     trackEvent(name, data = {}) {
-        // Optioneel: respecteer cookie/analytics consent
         if (window.dwAnalyticsConsent === false) return;
-
-        const url = this.analyticsWebhookURL || this.webhookURL;
-
+        const url = this.analyticsWebhookURL;
         try {
             fetch(url, {
                 method: 'POST',
@@ -150,49 +122,44 @@ class ChatWidget {
             if (a._dwTracked) return;
             a._dwTracked = true;
             a.addEventListener('click', () => {
-                this.trackEvent('chat_link_click', {
-                    href: a.href
-                });
+                this.trackEvent('chat_link_click', { href: a.href });
             }, { passive: true });
         });
     }
 
-    // ===== Storage =====
-    lsGet(k){ return localStorage.getItem(k); }
-    lsSet(k,v){ localStorage.setItem(k,v); }
-    lsRemove(k){ localStorage.removeItem(k); }
-    ssGet(k){ return sessionStorage.getItem(k); }
-    ssSet(k,v){ sessionStorage.setItem(k,v); }
+    lsGet(k) { return localStorage.getItem(k); }
+    lsSet(k, v) { localStorage.setItem(k, v); }
+    lsRemove(k) { localStorage.removeItem(k); }
+    ssGet(k) { return sessionStorage.getItem(k); }
+    ssSet(k, v) { sessionStorage.setItem(k, v); }
 
-    // ===== UI visibility =====
-    ensureHidden(){
-        const root=document.getElementById('chat-widget');
-        if(root){ root.setAttribute('data-ready','0'); root.style.visibility='hidden'; root.style.opacity='0'; }
-    }
-    revealWidget(){
-        const root=document.getElementById('chat-widget');
-        if(root){ root.setAttribute('data-ready','1'); root.style.visibility='visible'; root.style.opacity='1'; }
+    ensureHidden() {
+        const root = document.getElementById('chat-widget');
+        if (root) { root.setAttribute('data-ready', '0'); root.style.visibility = 'hidden'; root.style.opacity = '0'; }
     }
 
-    // ===== Tab/session boot =====
-    adoptOrCreateTabId(){
-        let tabId=this.ssGet(this.SS_TAB_ID);
-        if(!tabId){
-            tabId='tab-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);
-            this.ssSet(this.SS_TAB_ID,tabId);
-            this._isBrandNewTab=true;
+    revealWidget() {
+        const root = document.getElementById('chat-widget');
+        if (root) { root.setAttribute('data-ready', '1'); root.style.visibility = 'visible'; root.style.opacity = '1'; }
+    }
+
+    adoptOrCreateTabId() {
+        let tabId = this.ssGet(this.SS_TAB_ID);
+        if (!tabId) {
+            tabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
+            this.ssSet(this.SS_TAB_ID, tabId);
+            this._isBrandNewTab = true;
         } else {
-            this._isBrandNewTab=false;
+            this._isBrandNewTab = false;
         }
     }
 
-    // new tab + idle long enough → reset local session + generate new UUID
-    maybeResetForNewBrowser(){
-        const lastSeen=parseInt(this.lsGet(this.KEY_LAST_SEEN)||"0",10);
-        const now=Date.now();
-        if(this._isBrandNewTab && (now-lastSeen)>this.RESET_MS){
-            const sid=this.lsGet(this.KEY_SESSION_ID);
-            if(sid){
+    maybeResetForNewBrowser() {
+        const lastSeen = parseInt(this.lsGet(this.KEY_LAST_SEEN) || "0", 10);
+        const now = Date.now();
+        if (this._isBrandNewTab && (now - lastSeen) > this.RESET_MS) {
+            const sid = this.lsGet(this.KEY_SESSION_ID);
+            if (sid) {
                 this.lsRemove(`${this.LS_PREFIX}history:${sid}`);
                 this.lsRemove(`${this.LS_PREFIX}welcome:${sid}`);
                 this.lsRemove(`${this.LS_PREFIX}isOpen:${sid}`);
@@ -204,18 +171,17 @@ class ChatWidget {
             this.sessionId = newSid;
             this._sessionJustCreated = true;
         }
-        this.lsSet(this.KEY_LAST_SEEN,String(now));
+        this.lsSet(this.KEY_LAST_SEEN, String(now));
         this.installHeartbeat();
     }
 
-    installHeartbeat(){
-        document.addEventListener('visibilitychange',()=>this.lsSet(this.KEY_LAST_SEEN,String(Date.now())));
-        window.addEventListener('pagehide',()=>this.lsSet(this.KEY_LAST_SEEN,String(Date.now())));
-        this._heartbeat=setInterval(()=>{ if(!document.hidden) this.lsSet(this.KEY_LAST_SEEN,String(Date.now())); },2000);
+    installHeartbeat() {
+        document.addEventListener('visibilitychange', () => this.lsSet(this.KEY_LAST_SEEN, String(Date.now())));
+        window.addEventListener('pagehide', () => this.lsSet(this.KEY_LAST_SEEN, String(Date.now())));
+        this._heartbeat = setInterval(() => { if (!document.hidden) this.lsSet(this.KEY_LAST_SEEN, String(Date.now())); }, 2000);
     }
 
-    // ===== UUID helpers =====
-    _makeUuidV4(){
+    _makeUuidV4() {
         if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
             return crypto.randomUUID();
         }
@@ -225,35 +191,22 @@ class ChatWidget {
             return v.toString(16);
         });
     }
-    _looksLikeV4(uuid){
-        return typeof uuid === 'string'
-            && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
+
+    _looksLikeV4(uuid) {
+        return typeof uuid === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid);
     }
 
-    // ===== SessionId (migrate to real UUID v4) =====
-    loadOrCreateSessionId(provided){
+    loadOrCreateSessionId(provided) {
         let sid = this.lsGet(this.KEY_SESSION_ID) || provided || null;
-
         if (!sid || !this._looksLikeV4(sid)) {
             const oldSid = sid;
             sid = this._makeUuidV4();
-
             if (oldSid) {
-                const oldKeys = [
-                    `${this.LS_PREFIX}history:${oldSid}`,
-                    `${this.LS_PREFIX}welcome:${oldSid}`,
-                    `${this.LS_PREFIX}isOpen:${oldSid}`,
-                    `${this.LS_PREFIX}tooltipDismissed:${oldSid}`,
-                ];
+                const oldKeys = [`${this.LS_PREFIX}history:${oldSid}`, `${this.LS_PREFIX}welcome:${oldSid}`, `${this.LS_PREFIX}isOpen:${oldSid}`, `${this.LS_PREFIX}tooltipDismissed:${oldSid}`];
                 const vals = oldKeys.map(k => this.lsGet(k));
                 this.lsSet(this.KEY_SESSION_ID, sid);
-                const newKeys = [
-                    `${this.LS_PREFIX}history:${sid}`,
-                    `${this.LS_PREFIX}welcome:${sid}`,
-                    `${this.LS_PREFIX}isOpen:${sid}`,
-                    `${this.LS_PREFIX}tooltipDismissed:${sid}`,
-                ];
-                newKeys.forEach((nk,i)=>{ if (vals[i] !== null) this.lsSet(nk, vals[i]); });
+                const newKeys = [`${this.LS_PREFIX}history:${sid}`, `${this.LS_PREFIX}welcome:${sid}`, `${this.LS_PREFIX}isOpen:${sid}`, `${this.LS_PREFIX}tooltipDismissed:${sid}`];
+                newKeys.forEach((nk, i) => { if (vals[i] !== null) this.lsSet(nk, vals[i]); });
                 oldKeys.forEach(k => this.lsRemove(k));
             } else {
                 this.lsSet(this.KEY_SESSION_ID, sid);
@@ -266,234 +219,203 @@ class ChatWidget {
         return sid;
     }
 
-    // ===== Init =====
-    init(){
+    init() {
         this.ensureHidden();
         this.bindEvents();
         this.setupBroadcastChannel();
         this.setupStorageSync();
-        this.configReady=this.preloadChatData().catch(()=>{});
-        this.configReady.finally(()=>{
+        this.configReady = this.preloadChatData().catch(() => {});
+        this.configReady.finally(() => {
             this.restoreOpenState();
             this.showTooltip();
             this.startPulseAnimation();
         });
     }
 
-    bindEvents(){
-        const chatButton=document.getElementById('chatButton');
-        const chatClose=document.getElementById('chatClose');
-        const chatSend=document.getElementById('chatSend');
-        const chatInput=document.getElementById('chatInput');
-        const thumbsUp=document.getElementById('thumbsUp');
-        const thumbsDown=document.getElementById('thumbsDown');
-        const contactBtn=document.getElementById('contactBtn');
-        const chatTooltip=document.getElementById('chatTooltip');
+    bindEvents() {
+        const chatButton = document.getElementById('chatButton');
+        const chatClose = document.getElementById('chatClose');
+        const chatSend = document.getElementById('chatSend');
+        const chatInput = document.getElementById('chatInput');
+        const thumbsUp = document.getElementById('thumbsUp');
+        const thumbsDown = document.getElementById('thumbsDown');
+        const contactBtn = document.getElementById('contactBtn');
+        const chatTooltip = document.getElementById('chatTooltip');
 
-        chatButton?.addEventListener('click',()=>this.toggleChat());
-        chatClose?.addEventListener('click',()=>this.closeChat());
-        chatSend?.addEventListener('click',()=>this.sendMessage());
-        thumbsUp?.addEventListener('click',()=>this.handleFeedback(true));
-        thumbsDown?.addEventListener('click',()=>this.handleFeedback(false));
-        contactBtn?.addEventListener('click',()=>this.handleContact());
+        chatButton?.addEventListener('click', () => this.toggleChat());
+        chatClose?.addEventListener('click', () => this.closeChat());
+        chatSend?.addEventListener('click', () => this.sendMessage());
+        thumbsUp?.addEventListener('click', () => this.handleFeedback(true));
+        thumbsDown?.addEventListener('click', () => this.handleFeedback(false));
+        contactBtn?.addEventListener('click', () => this.handleContact());
 
-        chatInput?.addEventListener('keydown',(e)=>{
-            if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); this.sendMessage(); }
+        chatInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.sendMessage(); }
         });
-        chatInput?.addEventListener('input',(e)=>{
-            if (chatSend) chatSend.disabled = e.target.value.trim().length===0;
-        });
-
-        chatTooltip?.addEventListener('click', async()=>{
-            await this.toggleChat(); this.dismissTooltip();
-        });
-        chatTooltip?.addEventListener('keydown', async(e)=>{
-            if(e.key==='Enter' || e.key===' '){ e.preventDefault(); await this.toggleChat(); this.dismissTooltip(); }
+        chatInput?.addEventListener('input', (e) => {
+            if (chatSend) chatSend.disabled = e.target.value.trim().length === 0;
         });
 
-        ['click','keydown','scroll','pointerdown'].forEach(evt =>
-            window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN,String(Date.now())), {passive:true})
+        chatTooltip?.addEventListener('click', async () => { await this.toggleChat(); this.dismissTooltip(); });
+        chatTooltip?.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); await this.toggleChat(); this.dismissTooltip(); }
+        });
+
+        ['click', 'keydown', 'scroll', 'pointerdown'].forEach(evt =>
+            window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN, String(Date.now())), { passive: true })
         );
 
-        // Buttons die een vraag invullen + chat openen (chat="Vraag...")
         document.querySelectorAll("[chat]").forEach(el => {
             el.style.cursor = "pointer";
-
             el.addEventListener("click", (e) => {
                 e.preventDefault();
-
                 const question = el.getAttribute("chat");
-
-                this._chatTriggerMeta = {
-                    page: window.location.href,
-                    question
-                };
-
-                if (question) {
-                    this.prefillAndOpen(question);
-                }
+                this._chatTriggerMeta = { page: window.location.href, question };
+                if (question) this.prefillAndOpen(question);
             });
         });
 
-        // 🔹 Alle link-kliks op de site (excl. chatbot)
         document.addEventListener('click', (e) => {
             const a = e.target.closest('a');
             if (!a) return;
-            // Links binnen de chat overslaan
             if (a.closest('#chat-widget')) return;
-
-            this.trackEvent('page_link_click', {
-                href: a.href
-            });
+            this.trackEvent('page_link_click', { href: a.href });
         }, { passive: true });
     }
 
     prefillAndOpen(question) {
         if (!question || typeof question !== "string") return;
-
         this.openChat().then(() => {
             const input = document.getElementById("chatInput");
             if (!input) return;
-
             input.value = question;
-
             const chatSend = document.getElementById("chatSend");
             if (chatSend) chatSend.disabled = false;
-
             this.sendMessage();
         });
     }
 
-    setupBroadcastChannel(){
-        if("BroadcastChannel" in window){
-            this.channel=new BroadcastChannel("dw-chat");
-            this.channel.onmessage=(evt)=>{
-                const msg=evt.data||{};
-                if(msg.type==="openState"){
-                    if(msg.value===true && !this.isOpen) this.openChat();
-                    if(msg.value===false && this.isOpen) this.closeChat();
+    setupBroadcastChannel() {
+        if ("BroadcastChannel" in window) {
+            this.channel = new BroadcastChannel("dw-chat");
+            this.channel.onmessage = (evt) => {
+                const msg = evt.data || {};
+                if (msg.type === "openState") {
+                    if (msg.value === true && !this.isOpen) this.openChat();
+                    if (msg.value === false && this.isOpen) this.closeChat();
                 }
-                if(msg.type==="historyChanged"){ this.chatRestored=false; this.restoreChatHistory(); }
-                if(msg.type==="tooltipDismissed"){ this.hideTooltip(); }
+                if (msg.type === "historyChanged") { this.chatRestored = false; this.restoreChatHistory(); }
+                if (msg.type === "tooltipDismissed") { this.hideTooltip(); }
             };
         }
     }
-    postChannel(payload){ if(this.channel){ try{ this.channel.postMessage(payload); }catch{} } }
 
-    setupStorageSync(){
-        window.addEventListener('storage', async (e)=>{
-            if(!e.key) return;
-            if(e.key===this.KEY_OPEN){
-                const shouldBeOpen=this.lsGet(this.KEY_OPEN)==='true';
-                if(shouldBeOpen && !this.isOpen) await this.openChat();
-                if(!shouldBeOpen && this.isOpen) this.closeChat();
+    postChannel(payload) { if (this.channel) { try { this.channel.postMessage(payload); } catch {} } }
+
+    setupStorageSync() {
+        window.addEventListener('storage', async (e) => {
+            if (!e.key) return;
+            if (e.key === this.KEY_OPEN) {
+                const shouldBeOpen = this.lsGet(this.KEY_OPEN) === 'true';
+                if (shouldBeOpen && !this.isOpen) await this.openChat();
+                if (!shouldBeOpen && this.isOpen) this.closeChat();
                 return;
             }
-            if(e.key===this.KEY_HISTORY){ this.chatRestored=false; this.restoreChatHistory(); return; }
-            if(e.key===this.KEY_TOOLTIP){ const dismissed=this.lsGet(this.KEY_TOOLTIP)==='true'; if(dismissed) this.hideTooltip(); return; }
+            if (e.key === this.KEY_HISTORY) { this.chatRestored = false; this.restoreChatHistory(); return; }
+            if (e.key === this.KEY_TOOLTIP) { const dismissed = this.lsGet(this.KEY_TOOLTIP) === 'true'; if (dismissed) this.hideTooltip(); return; }
         });
     }
 
-    showTooltip(){
-        setTimeout(()=>{
-            if(!this.configLoaded) return;
-            const dismissed=this.lsGet(this.KEY_TOOLTIP);
-            if(!this.isOpen && !dismissed){
+    showTooltip() {
+        setTimeout(() => {
+            if (!this.configLoaded) return;
+            const dismissed = this.lsGet(this.KEY_TOOLTIP);
+            if (!this.isOpen && !dismissed) {
                 document.getElementById('chatTooltip')?.classList.add('chat-widget__tooltip--visible');
             }
         }, 5000);
     }
-    hideTooltip(){ document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible'); }
-    dismissTooltip(){
-        const el=document.getElementById('chatTooltip');
-        if(el){ el.classList.remove('chat-widget__tooltip--visible'); el.style.display='none'; }
-        this.lsSet(this.KEY_TOOLTIP,'true');
+
+    hideTooltip() { document.getElementById('chatTooltip')?.classList.remove('chat-widget__tooltip--visible'); }
+
+    dismissTooltip() {
+        const el = document.getElementById('chatTooltip');
+        if (el) { el.classList.remove('chat-widget__tooltip--visible'); el.style.display = 'none'; }
+        this.lsSet(this.KEY_TOOLTIP, 'true');
         this.postChannel({ type: "tooltipDismissed" });
     }
-    startPulseAnimation(){ setTimeout(()=>{ document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse'); }, 10000); }
 
-    applyTheme(primary, secondary){
-        const root=document.querySelector('#chat-widget') || document.documentElement;
+    startPulseAnimation() { setTimeout(() => { document.getElementById('chatButton')?.classList.add('chat-widget__button--pulse'); }, 10000); }
+
+    applyTheme(primary, secondary) {
+        const root = document.querySelector('#chat-widget') || document.documentElement;
         root.style.setProperty('--primary-color', primary || this.DEFAULTS.primary_color);
         root.style.setProperty('--secondary-color', secondary || this.DEFAULTS.secondary_color);
     }
 
-    _normalize(value, fallback){
-        if(Array.isArray(value)) value=value[0];
-        if(typeof value!=="string") return fallback;
-        const trimmed=value.trim();
+    _normalize(value, fallback) {
+        if (Array.isArray(value)) value = value[0];
+        if (typeof value !== "string") return fallback;
+        const trimmed = value.trim();
         return trimmed.length ? trimmed : fallback;
     }
 
-    applyRemoteConfig(raw){
-        const cfg={
-            avatar_url:         this._normalize(raw?.avatar_url,         this.DEFAULTS.avatar_url),
-            chatbot_name:       this._normalize(raw?.chatbot_name,       this.DEFAULTS.chatbot_name),
-            name_subtitle:      this._normalize(raw?.name_subtitle,      this.DEFAULTS.name_subtitle),
-            tooltip:            this._normalize(raw?.tooltip,            this.DEFAULTS.tooltip),
-            opening_message:    this._normalize(raw?.opening_message,    this.DEFAULTS.opening_message),
-            placeholder_message:this._normalize(raw?.placeholder_message,this.DEFAULTS.placeholder_message),
-            cta_button_text:    this._normalize(raw?.cta_button_text,    this.DEFAULTS.cta_button_text),
-            cta_text:           this._normalize(raw?.cta_text,           this.DEFAULTS.cta_text),
-            success_text:       this._normalize(raw?.success_text,       this.DEFAULTS.success_text),
-            not_useful_text:    this._normalize(raw?.not_useful_text,    this.DEFAULTS.not_useful_text),
-            primary_color:      this._normalize(raw?.primary_color,      this.DEFAULTS.primary_color),
-            secondary_color:    this._normalize(raw?.secondary_color,    this.DEFAULTS.secondary_color),
-            chat_position:      this._normalize(raw?.chat_position,      this.DEFAULTS.chat_position), // NEW
+    applyRemoteConfig(raw) {
+        const cfg = {
+            avatar_url: this._normalize(raw?.avatar_url, this.DEFAULTS.avatar_url),
+            chatbot_name: this._normalize(raw?.chatbot_name, this.DEFAULTS.chatbot_name),
+            name_subtitle: this._normalize(raw?.name_subtitle, this.DEFAULTS.name_subtitle),
+            tooltip: this._normalize(raw?.tooltip, this.DEFAULTS.tooltip),
+            opening_message: this._normalize(raw?.opening_message, this.DEFAULTS.opening_message),
+            placeholder_message: this._normalize(raw?.placeholder_message, this.DEFAULTS.placeholder_message),
+            cta_button_text: this._normalize(raw?.cta_button_text, this.DEFAULTS.cta_button_text),
+            cta_text: this._normalize(raw?.cta_text, this.DEFAULTS.cta_text),
+            success_text: this._normalize(raw?.success_text, this.DEFAULTS.success_text),
+            not_useful_text: this._normalize(raw?.not_useful_text, this.DEFAULTS.not_useful_text),
+            primary_color: this._normalize(raw?.primary_color, this.DEFAULTS.primary_color),
+            secondary_color: this._normalize(raw?.secondary_color, this.DEFAULTS.secondary_color),
+            chat_position: this._normalize(raw?.chat_position, this.DEFAULTS.chat_position),
         };
 
-        this.texts = {
-            success:  cfg.success_text,
-            notUseful:cfg.not_useful_text,
-            cta:      cfg.cta_text,
-        };
+        this.texts = { success: cfg.success_text, notUseful: cfg.not_useful_text, cta: cfg.cta_text };
         this.chatConfig = cfg;
-
         this.applyTheme(cfg.primary_color, cfg.secondary_color);
-        this.applyChatPosition(cfg.chat_position); // NEW: Apply position class
+        this.applyChatPosition(cfg.chat_position);
 
-        const $ = (sel)=>document.querySelector(sel);
-
-        const avatar1=$("#js-profile-image");
-        const avatar2=$("#js-profile-image-2");
-        if(cfg.avatar_url){
-            if(avatar1) avatar1.src=cfg.avatar_url;
-            if(avatar2) avatar2.src=cfg.avatar_url;
+        const $ = (sel) => document.querySelector(sel);
+        const avatar1 = $("#js-profile-image");
+        const avatar2 = $("#js-profile-image-2");
+        if (cfg.avatar_url) {
+            if (avatar1) avatar1.src = cfg.avatar_url;
+            if (avatar2) avatar2.src = cfg.avatar_url;
         }
+        const headerTitle = $(".chat-widget__header-title");
+        if (headerTitle) headerTitle.textContent = cfg.chatbot_name;
+        const headerSubtitle = $(".chat-widget__header-subtitle");
+        if (headerSubtitle) headerSubtitle.textContent = `Online • ${cfg.name_subtitle}`;
+        const tooltipEl = $("#chatTooltip");
+        if (tooltipEl) { tooltipEl.textContent = cfg.tooltip; tooltipEl.setAttribute("aria-label", "Open chat"); }
+        const contactBtn = $("#contactBtn");
+        if (contactBtn) contactBtn.textContent = cfg.cta_button_text;
+        const input = $("#chatInput");
+        if (input) input.setAttribute("placeholder", cfg.placeholder_message);
 
-        const headerTitle=$(".chat-widget__header-title");
-        if(headerTitle) headerTitle.textContent=cfg.chatbot_name;
-
-        const headerSubtitle=$(".chat-widget__header-subtitle");
-        if(headerSubtitle) headerSubtitle.textContent=`Online • ${cfg.name_subtitle}`;
-
-        const tooltipEl=$("#chatTooltip");
-        if(tooltipEl){ tooltipEl.textContent=cfg.tooltip; tooltipEl.setAttribute("aria-label","Open chat"); }
-
-        const contactBtn=$("#contactBtn");
-        if(contactBtn) contactBtn.textContent=cfg.cta_button_text;
-
-        const input=$("#chatInput");
-        if(input) input.setAttribute("placeholder", cfg.placeholder_message);
-
-        this.configLoaded=true;
+        this.configLoaded = true;
         this.revealWidget();
 
-        const alreadyWelcomed=this.lsGet(this.KEY_WELCOME)==="true";
-        const hasHistory=(this.lsGet(this.KEY_HISTORY)||"[]")!=="[]";
-        if(!alreadyWelcomed && !hasHistory && cfg.opening_message){
-            const html = cfg.opening_message.replace(/\n/g,"<br>");
+        const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
+        const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
+        if (!alreadyWelcomed && !hasHistory && cfg.opening_message) {
+            const html = cfg.opening_message.replace(/\n/g, "<br>");
             this.addMessage("bot", html);
-            this.lsSet(this.KEY_WELCOME,"true");
+            this.lsSet(this.KEY_WELCOME, "true");
         }
     }
 
     applyChatPosition(position) {
         const container = document.getElementById('chatContainer');
         if (!container) return;
-
         container.classList.remove('chat-widget__container--right', 'chat-widget__container--center');
-
         if (position === 'center') {
             container.classList.add('chat-widget__container--center');
         } else {
@@ -501,8 +423,8 @@ class ChatWidget {
         }
     }
 
-    async preloadChatData(){
-        try{
+    async preloadChatData() {
+        try {
             const res = await fetch(this.CONFIG_WEBHOOK, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -513,11 +435,11 @@ class ChatWidget {
                     page: window.location.href
                 }),
             });
-            if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
+            if (!res.ok) throw new Error(`Webhook error: ${res.status}`);
             const data = await res.json();
-            try { this.lsSet(this.KEY_CONFIG, JSON.stringify({data, savedAt: Date.now()})); } catch {}
+            try { this.lsSet(this.KEY_CONFIG, JSON.stringify({ data, savedAt: Date.now() })); } catch {}
             this.applyRemoteConfig(data);
-        } catch (err){
+        } catch (err) {
             console.warn("[ChatWidget] Config fetch failed, using cache/defaults:", err);
             const cachedRaw = this.lsGet(this.KEY_CONFIG);
             if (cachedRaw) {
@@ -530,67 +452,57 @@ class ChatWidget {
             this.applyTheme(this.DEFAULTS.primary_color, this.DEFAULTS.secondary_color);
             this.configLoaded = true;
             this.revealWidget();
-            const alreadyWelcomed=this.lsGet(this.KEY_WELCOME)==="true";
-            const hasHistory=(this.lsGet(this.KEY_HISTORY)||"[]")!=="[]";
-            if(!alreadyWelcomed && !hasHistory){
+            const alreadyWelcomed = this.lsGet(this.KEY_WELCOME) === "true";
+            const hasHistory = (this.lsGet(this.KEY_HISTORY) || "[]") !== "[]";
+            if (!alreadyWelcomed && !hasHistory) {
                 this.addMessage('bot', this.DEFAULTS.opening_message);
-                this.lsSet(this.KEY_WELCOME,'true');
+                this.lsSet(this.KEY_WELCOME, 'true');
             }
         }
     }
 
-    // ===== Open/close =====
-    async toggleChat(){ return this.isOpen ? this.closeChat() : this.openChat(); }
+    async toggleChat() { return this.isOpen ? this.closeChat() : this.openChat(); }
 
-    async openChat(){
-        if(!this.configLoaded && this.configReady){ await this.configReady; }
-        const container=document.getElementById('chatContainer');
+    async openChat() {
+        if (!this.configLoaded && this.configReady) { await this.configReady; }
+        const container = document.getElementById('chatContainer');
         container?.classList.add('chat-widget__container--open');
         this.isOpen = true;
-        this.lsSet(this.KEY_OPEN,'true');
-        this.postChannel({ type:"openState", value:true });
+        this.lsSet(this.KEY_OPEN, 'true');
+        this.postChannel({ type: "openState", value: true });
         this.hideTooltip();
         this.restoreChatHistory();
-        setTimeout(()=> document.getElementById('chatInput')?.focus(), 300);
-
-        // 🔹 Analytics: chat_open
+        setTimeout(() => document.getElementById('chatInput')?.focus(), 300);
         this.trackEvent('chat_open');
     }
 
-    closeChat(){
+    closeChat() {
         document.getElementById('chatContainer')?.classList.remove('chat-widget__container--open');
         this.isOpen = false;
-        this.lsSet(this.KEY_OPEN,'false');
-        this.postChannel({ type:"openState", value:false });
-
-        // 🔹 Analytics: chat_close
+        this.lsSet(this.KEY_OPEN, 'false');
+        this.postChannel({ type: "openState", value: false });
         this.trackEvent('chat_close');
     }
 
-    restoreOpenState(){
-        const wasOpen=this.lsGet(this.KEY_OPEN);
-        if(wasOpen==='true'){
-            if(this.configReady){ this.configReady.then(()=>this.openChat()); }
+    restoreOpenState() {
+        const wasOpen = this.lsGet(this.KEY_OPEN);
+        if (wasOpen === 'true') {
+            if (this.configReady) { this.configReady.then(() => this.openChat()); }
             else { this.openChat(); }
         }
     }
 
-    // ===== Messaging & streaming =====
     async sendMessage() {
         const input = document.getElementById('chatInput');
         const message = input?.value.trim();
         if (!message) return;
 
         this.addMessage('user', message);
-
         if (input) input.value = '';
         const sendBtn = document.getElementById('chatSend');
         if (sendBtn) sendBtn.disabled = true;
 
-        if (this._currentAbort) {
-            try { this._currentAbort.abort(); } catch {}
-            this._currentAbort = null;
-        }
+        if (this._currentAbort) { try { this._currentAbort.abort(); } catch {} this._currentAbort = null; }
 
         this.showTypingIndicator();
         this._rawHTMLStream = "";
@@ -611,16 +523,12 @@ class ChatWidget {
                     websiteId: this.websiteId,
                     lang: this.lang,
                     page: window.location.href,
-                    ...(this._chatTriggerMeta ? {
-                        question: this._chatTriggerMeta.question
-                    } : {})
+                    ...(this._chatTriggerMeta ? { question: this._chatTriggerMeta.question } : {})
                 }),
                 signal: ac.signal
             });
 
-            if (!res.ok || !res.body) {
-                throw new Error(`Netwerkfout of geen stream body (status ${res.status})`);
-            }
+            if (!res.ok || !res.body) throw new Error(`Netwerkfout of geen stream body (status ${res.status})`);
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
@@ -630,23 +538,17 @@ class ChatWidget {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-
                 const chunkText = decoder.decode(value, { stream: true });
                 buffer += chunkText;
-
                 const lines = buffer.split("\n");
                 buffer = lines.pop() ?? "";
 
                 for (const line of lines) {
                     const trimmed = line.trim();
                     if (!trimmed) continue;
-
                     try {
                         const obj = JSON.parse(trimmed);
-                        if (obj.type === "item" &&
-                            typeof obj.content === "string" &&
-                            obj.content.length
-                        ) {
+                        if (obj.type === "item" && typeof obj.content === "string" && obj.content.length) {
                             if (!gotFirst) {
                                 this.hideTypingIndicator();
                                 this.lastBotMessage = this.addMessage('bot', '', true);
@@ -665,18 +567,12 @@ class ChatWidget {
                 this.lastBotMessage = this.addMessage('bot', 'Geen antwoord ontvangen.', true);
             } else if (this.lastBotMessage) {
                 const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
-                if (textEl)
-                    textEl.innerHTML = this._sanitizeHTML(
-                        this._rawHTMLStream || textEl.innerHTML || ""
-                    );
-
+                if (textEl) textEl.innerHTML = this._sanitizeHTML(this._rawHTMLStream || textEl.innerHTML || "");
                 this.saveMessageToSession({
                     type: 'bot',
-                    htmlText: this.lastBotMessage
-                        .querySelector('.chat-widget__message-text')?.innerHTML || '',
+                    htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
                     timestamp: new Date().toISOString()
                 });
-
                 document.getElementById('thumbsUp')?.removeAttribute('disabled');
                 document.getElementById('thumbsDown')?.removeAttribute('disabled');
             }
@@ -686,23 +582,15 @@ class ChatWidget {
                 this.hideTypingIndicator();
                 this.lastBotMessage = this.addMessage('bot', '', true);
             }
-
             this._appendToken("<p>Er ging iets mis.</p>");
             await this._waitForPumpDrain();
-
             const textEl = this.lastBotMessage.querySelector('.chat-widget__message-text');
-            if (textEl)
-                textEl.innerHTML = this._sanitizeHTML(
-                    this._rawHTMLStream || textEl.innerHTML || ""
-                );
-
+            if (textEl) textEl.innerHTML = this._sanitizeHTML(this._rawHTMLStream || textEl.innerHTML || "");
             this.saveMessageToSession({
                 type: 'bot',
-                htmlText: this.lastBotMessage
-                    .querySelector('.chat-widget__message-text')?.innerHTML || '',
+                htmlText: this.lastBotMessage.querySelector('.chat-widget__message-text')?.innerHTML || '',
                 timestamp: new Date().toISOString()
             });
-
         } finally {
             if (sendBtn) sendBtn.disabled = false;
             this._currentAbort = null;
@@ -710,7 +598,7 @@ class ChatWidget {
         }
     }
 
-    _enqueueHTMLTokens(str){
+    _enqueueHTMLTokens(str) {
         if (!str) return;
         let s = (this._pendingTag || "") + String(str);
         this._pendingTag = "";
@@ -718,10 +606,7 @@ class ChatWidget {
         while (i < s.length) {
             if (s[i] === '<') {
                 const j = s.indexOf('>', i);
-                if (j === -1) {
-                    this._pendingTag = s.slice(i);
-                    break;
-                }
+                if (j === -1) { this._pendingTag = s.slice(i); break; }
                 this._tokenQueue.push(s.slice(i, j + 1));
                 i = j + 1;
             } else {
@@ -736,14 +621,14 @@ class ChatWidget {
         if (!this._pumpRunning && this._tokenQueue.length) this._startPump();
     }
 
-    _startPump(){
+    _startPump() {
         if (this._pumpRunning) return;
         this._pumpRunning = true;
         const step = () => {
             if (!this._tokenQueue.length) {
                 this._pumpRunning = false;
                 const rs = this._drainResolvers.splice(0);
-                rs.forEach(fn=>fn());
+                rs.forEach(fn => fn());
                 return;
             }
             const tok = this._tokenQueue.shift();
@@ -753,13 +638,13 @@ class ChatWidget {
         requestAnimationFrame(step);
     }
 
-    _appendToken(tok){
+    _appendToken(tok) {
         if (!this.lastBotMessage) return;
         this._rawHTMLStream += String(tok);
         this._renderStreamInto(this.lastBotMessage, this._rawHTMLStream);
     }
 
-    _waitForPumpDrain(){
+    _waitForPumpDrain() {
         if (!this._pumpRunning && this._tokenQueue.length === 0) return Promise.resolve();
         return new Promise(res => this._drainResolvers.push(res));
     }
@@ -772,9 +657,9 @@ class ChatWidget {
             day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
         });
         msg.innerHTML = `
-      <div class="chat-widget__message-text">${htmlText}</div>
-      <div class="chat-widget__timestamp">${formattedTime}</div>
-    `;
+            <div class="chat-widget__message-text">${htmlText}</div>
+            <div class="chat-widget__timestamp">${formattedTime}</div>
+        `;
         const container = document.getElementById('chatMessages');
         container?.appendChild(msg);
         if (container) container.scrollTop = container.scrollHeight;
@@ -789,26 +674,27 @@ class ChatWidget {
         return msg;
     }
 
-    showTypingIndicator(){
-        const indicator=document.createElement('div');
-        indicator.id='typingIndicator';
-        indicator.className='chat-widget__typing chat-widget__typing--visible';
-        indicator.innerHTML=`
-      <div class="chat-widget__typing-dot"></div>
-      <div class="chat-widget__typing-dot"></div>
-      <div class="chat-widget__typing-dot"></div>
-    `;
-        const messages=document.getElementById('chatMessages');
+    showTypingIndicator() {
+        const indicator = document.createElement('div');
+        indicator.id = 'typingIndicator';
+        indicator.className = 'chat-widget__typing chat-widget__typing--visible';
+        indicator.innerHTML = `
+            <div class="chat-widget__typing-dot"></div>
+            <div class="chat-widget__typing-dot"></div>
+            <div class="chat-widget__typing-dot"></div>
+        `;
+        const messages = document.getElementById('chatMessages');
         messages?.appendChild(indicator);
-        if(messages) messages.scrollTop = messages.scrollHeight;
+        if (messages) messages.scrollTop = messages.scrollHeight;
     }
-    hideTypingIndicator(){ document.getElementById('typingIndicator')?.remove(); }
 
-    handleFeedback(isUseful){
-        const thumbsUp=document.getElementById('thumbsUp');
-        const thumbsDown=document.getElementById('thumbsDown');
+    hideTypingIndicator() { document.getElementById('typingIndicator')?.remove(); }
+
+    handleFeedback(isUseful) {
+        const thumbsUp = document.getElementById('thumbsUp');
+        const thumbsDown = document.getElementById('thumbsDown');
         if (thumbsUp?.disabled || thumbsDown?.disabled) {
-            this.addMessage('bot','Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
+            this.addMessage('bot', 'Stel eerst een vraag zodat ik je kan helpen voordat je feedback geeft. 🙂');
             return;
         }
         thumbsUp.classList.remove('chat-widget__feedback-btn--active');
@@ -822,38 +708,30 @@ class ChatWidget {
         }
         thumbsUp.setAttribute('disabled', true);
         thumbsDown.setAttribute('disabled', true);
-        const feedbackLabel = isUseful ? 'successful' : 'unsuccessful';
         fetch(this.webhookURL, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                type:'feedback',
-                feedback:feedbackLabel,
-                sessionId:this.sessionId,
-                websiteId:this.websiteId,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: 'feedback',
+                feedback: isUseful ? 'successful' : 'unsuccessful',
+                sessionId: this.sessionId,
+                websiteId: this.websiteId,
                 ...(this.userId && { userId: this.userId })
             })
-        }).catch(()=>{});
+        }).catch(() => {});
     }
 
-    handleContact(){
-        const html=(this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g,"<br>");
-        this.addMessage('bot',html);
-
-        // 🔹 Analytics: contactClicked
-        this.trackEvent('contact_clicked', {
-            source: 'chat_cta'
-        });
+    handleContact() {
+        const html = (this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g, "<br>");
+        this.addMessage('bot', html);
+        this.trackEvent('contact_clicked', { source: 'chat_cta' });
     }
 
     _renderStreamInto(bubble, rawHTML) {
         const textEl = bubble.querySelector('.chat-widget__message-text');
         if (!textEl) return;
         textEl.innerHTML = this._sanitizeHTML(rawHTML);
-
-        // 🔹 Links in chat-bubble tracken
         this._attachChatLinkTracking(textEl);
-
         const messages = document.getElementById('chatMessages');
         if (messages) messages.scrollTop = messages.scrollHeight;
         bubble._rawStream = rawHTML;
@@ -862,7 +740,7 @@ class ChatWidget {
     _sanitizeHTML(htmlish) {
         const parser = new DOMParser();
         const doc = parser.parseFromString(String(htmlish), 'text/html');
-        const allowed = new Set(['A','P','UL','OL','LI','BR','B','STRONG','I','EM','CODE','PRE','H1','H2','H3','H4','H5','H6','BLOCKQUOTE']);
+        const allowed = new Set(['A', 'P', 'UL', 'OL', 'LI', 'BR', 'B', 'STRONG', 'I', 'EM', 'CODE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE']);
         const urlRegex = /((?:https?:\/\/|www\.)[^\s<]+)/gi;
 
         const sanitizeHref = (href) => {
@@ -872,7 +750,7 @@ class ChatWidget {
             if (!/^https?:\/\//i.test(u) && !/^mailto:/i.test(u) && !/^tel:/i.test(u)) return '';
             try {
                 const parsed = new URL(u, window.location.origin);
-                if (['http:','https:','mailto:','tel:'].includes(parsed.protocol)) return parsed.href;
+                if (['http:', 'https:', 'mailto:', 'tel:'].includes(parsed.protocol)) return parsed.href;
             } catch {}
             return '';
         };
@@ -930,7 +808,7 @@ class ChatWidget {
                         child.setAttribute('aria-label', '(opent in een nieuw tabblad)');
                         for (const attr of [...child.attributes]) {
                             const name = attr.name.toLowerCase();
-                            if (!['href','target','rel','aria-label'].includes(name)) child.removeAttribute(attr.name);
+                            if (!['href', 'target', 'rel', 'aria-label'].includes(name)) child.removeAttribute(attr.name);
                         }
                     } else {
                         for (const attr of [...child.attributes]) child.removeAttribute(attr.name);
@@ -946,39 +824,49 @@ class ChatWidget {
         return doc.body.innerHTML;
     }
 
-    // ===== History =====
-    saveMessageToSession(message){
+    saveMessageToSession(message) {
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
         history.push(message);
         this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
-        this.postChannel({ type:"historyChanged" });
-        this.lsSet(this.KEY_HISTORY, JSON.stringify(history));
+        this.postChannel({ type: "historyChanged" });
     }
 
-    restoreChatHistory(){
+    restoreChatHistory() {
         if (this.chatRestored) return;
         const history = JSON.parse(this.lsGet(this.KEY_HISTORY) || '[]');
         const messagesEl = document.getElementById('chatMessages');
         if (messagesEl) messagesEl.innerHTML = '';
-        history.forEach(entry => {
-            this.addMessage(entry.type, entry.htmlText, true);
-        });
+        history.forEach(entry => { this.addMessage(entry.type, entry.htmlText, true); });
         this.chatRestored = true;
     }
 
-    clearChatHistory(){
+    clearChatHistory() {
         this.lsRemove(this.KEY_HISTORY);
         this.lsRemove(this.KEY_WELCOME);
         this.lsRemove(this.KEY_TOOLTIP);
         this.lsRemove(this.KEY_OPEN);
-        this.chatRestored=false;
+        this.chatRestored = false;
     }
 
-    maybeAddWelcomeMessage(){
-        const alreadyWelcomed=this.lsGet(this.KEY_WELCOME);
-        if(!alreadyWelcomed){
+    maybeAddWelcomeMessage() {
+        const alreadyWelcomed = this.lsGet(this.KEY_WELCOME);
+        if (!alreadyWelcomed) {
             this.addMessage('bot', this.DEFAULTS.opening_message);
-            this.lsSet(this.KEY_WELCOME,'true');
+            this.lsSet(this.KEY_WELCOME, 'true');
         }
     }
 }
+
+// ==================== LOADER ====================
+// Plaats dit onderaan je pagina of in een apart script
+
+new ChatWidget(
+    "https://n8n.draadwerk.nl/webhook/6d7815bf-da68-4e19-81c2-0575a091afba", // Chat webhook
+    null,
+    null,
+    "ceb173a0-d641-47d4-b67e-9f5f7b3467da", // Jouw websiteId
+    {
+        lang: "nl",
+        analyticsWebhook: "https://n8n.draadwerk.nl/webhook/f71dfc1c-e350-4c4a-b6c0-b07f7d0ed3d0"
+    }
+);

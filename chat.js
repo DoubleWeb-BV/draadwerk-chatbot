@@ -128,16 +128,10 @@ class ChatWidget {
         return 'Other';
     }
 
-    _attachChatLinkTracking(rootEl) {
-        if (!rootEl) return;
-        const links = rootEl.querySelectorAll('a[href]');
-        links.forEach(a => {
-            if (a._dwTracked) return;
-            a._dwTracked = true;
-            a.addEventListener('click', () => {
-                this.trackEvent('chat_link_click', { href: a.href });
-            }, { passive: true });
-        });
+    // Tracking via event delegation, dus deze hoeft niets meer te doen
+    _attachChatLinkTracking(_rootEl) {
+        // bewust leeg gelaten
+        return;
     }
 
     lsGet(k) { return localStorage.getItem(k); }
@@ -266,14 +260,15 @@ class ChatWidget {
     }
 
     bindEvents() {
-        const chatButton = document.getElementById('chatButton');
-        const chatClose = document.getElementById('chatClose');
-        const chatSend = document.getElementById('chatSend');
-        const chatInput = document.getElementById('chatInput');
-        const thumbsUp = document.getElementById('thumbsUp');
-        const thumbsDown = document.getElementById('thumbsDown');
-        const contactBtn = document.getElementById('contactBtn');
-        const chatTooltip = document.getElementById('chatTooltip');
+        const chatButton   = document.getElementById('chatButton');
+        const chatClose    = document.getElementById('chatClose');
+        const chatSend     = document.getElementById('chatSend');
+        const chatInput    = document.getElementById('chatInput');
+        const thumbsUp     = document.getElementById('thumbsUp');
+        const thumbsDown   = document.getElementById('thumbsDown');
+        const contactBtn   = document.getElementById('contactBtn');
+        const chatTooltip  = document.getElementById('chatTooltip');
+        const chatMessages = document.getElementById('chatMessages');
 
         chatButton?.addEventListener('click', () => this.toggleChat());
         chatClose?.addEventListener('click', () => this.closeChat());
@@ -294,6 +289,13 @@ class ChatWidget {
             if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); await this.toggleChat(); this.dismissTooltip(); }
         });
 
+        // ✅ Link clicks in de chat zelf (event delegation)
+        chatMessages?.addEventListener('click', (e) => {
+            const a = e.target.closest('a');
+            if (!a) return;
+            this.trackEvent('chat_link_click', { href: a.href });
+        }, { passive: true });
+
         ['click', 'keydown', 'scroll', 'pointerdown'].forEach(evt =>
             window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN, String(Date.now())), { passive: true })
         );
@@ -308,11 +310,11 @@ class ChatWidget {
             });
         });
 
-        // Page link tracking (outside chat)
+        // ✅ Link clicks buiten de chat-widget
         document.addEventListener('click', (e) => {
             const a = e.target.closest('a');
             if (!a) return;
-            if (a.closest('#chat-widget')) return;
+            if (a.closest('#chat-widget')) return; // chat-links worden hierboven afgevangen
             this.trackEvent('page_link_click', { href: a.href });
         }, { passive: true });
     }
@@ -801,7 +803,7 @@ class ChatWidget {
         const textEl = bubble.querySelector('.chat-widget__message-text');
         if (!textEl) return;
         textEl.innerHTML = this._sanitizeHTML(rawHTML);
-        this._attachChatLinkTracking(textEl);
+        // tracking gebeurt nu via event delegation op #chatMessages
         const messages = document.getElementById('chatMessages');
         if (messages) messages.scrollTop = messages.scrollHeight;
         bubble._rawStream = rawHTML;
@@ -928,6 +930,7 @@ class ChatWidget {
 }
 
 // ==================== LOADER ====================
+// Plaats dit onderaan je pagina of in een apart script
 
 new ChatWidget(
     "https://n8n.draadwerk.nl/webhook/6d7815bf-da68-4e19-81c2-0575a091afba", // Chat webhook

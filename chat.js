@@ -74,6 +74,74 @@ class ChatWidget {
         this.init();
     }
 
+    // ===== Analytics helper =====
+    trackEvent(name, data = {}) {
+        try {
+            fetch(this.webhookURL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                keepalive: true,
+                body: JSON.stringify({
+                    type: 'analytics',
+                    event: name,
+                    sessionId: this.sessionId,
+                    websiteId: this.websiteId,
+                    ...(this.userId && { userId: this.userId }),
+                    page: window.location.href,
+                    pageTitle: document.title,
+                    deviceType: this._getDeviceType(),
+                    browserName: this._getBrowserName(),
+                    osName: this._getOSName(),
+                    timestamp: new Date().toISOString(),
+                    data
+                })
+            });
+        } catch (e) {
+            console.warn('[ChatWidget] trackEvent error', e);
+        }
+    }
+
+    _getDeviceType() {
+        const w = window.innerWidth;
+        if (w <= 768) return 'mobile';
+        if (w <= 1024) return 'tablet';
+        return 'desktop';
+    }
+
+    _getBrowserName() {
+        const ua = navigator.userAgent;
+        if (/Edg\//.test(ua)) return 'Edge';
+        if (/OPR\//.test(ua) || /Opera/.test(ua)) return 'Opera';
+        if (/Chrome\//.test(ua) && !/Edg\//.test(ua) && !/OPR\//.test(ua)) return 'Chrome';
+        if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) return 'Safari';
+        if (/Firefox\//.test(ua)) return 'Firefox';
+        return 'Other';
+    }
+
+    _getOSName() {
+        const ua = navigator.userAgent;
+        if (/Windows NT/.test(ua)) return 'Windows';
+        if (/Mac OS X/.test(ua)) return 'macOS';
+        if (/Android/.test(ua)) return 'Android';
+        if (/(iPhone|iPad|iPod)/.test(ua)) return 'iOS';
+        if (/Linux/.test(ua)) return 'Linux';
+        return 'Other';
+    }
+
+    _attachChatLinkTracking(rootEl) {
+        if (!rootEl) return;
+        const links = rootEl.querySelectorAll('a[href]');
+        links.forEach(a => {
+            if (a._dwTracked) return;
+            a._dwTracked = true;
+            a.addEventListener('click', () => {
+                this.trackEvent('chat_link_click', {
+                    href: a.href
+                });
+            }, { passive: true });
+        });
+    }
+
     // ===== Storage =====
     lsGet(k){ return localStorage.getItem(k); }
     lsSet(k,v){ localStorage.setItem(k,v); }
@@ -232,11 +300,9 @@ class ChatWidget {
         ['click','keydown','scroll','pointerdown'].forEach(evt =>
             window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN,String(Date.now())), {passive:true})
         );
-        // Buttons die een vraag invullen + chat openen
-        // Elements with chat="Vraag..."
-        // Elements with chat="Vraag..."
-        document.querySelectorAll("[chat]").forEach(el => {
 
+        // Buttons die een vraag invullen + chat openen
+        document.querySelectorAll("[chat]").forEach(el => {
             el.style.cursor = "pointer";
 
             el.addEventListener("click", (e) => {
@@ -244,9 +310,9 @@ class ChatWidget {
 
                 const question = el.getAttribute("chat");
 
-                // Alleen deze 2 waarden opslaan
                 this._chatTriggerMeta = {
-                    page: window.location.href
+                    page: window.location.href,
+                    question
                 };
 
                 if (question) {
@@ -255,7 +321,17 @@ class ChatWidget {
             });
         });
 
+        // 🔹 Alle link-kliks op de site (excl. chatbot)
+        document.addEventListener('click', (e) => {
+            const a = e.target.closest('a');
+            if (!a) return;
+            // Links binnen de chat overslaan
+            if (a.closest('#chat-widget')) return;
 
+            this.trackEvent('page_link_click', {
+                href: a.href
+            });
+        }, { passive: true });
     }
 
     prefillAndOpen(question) {
@@ -275,7 +351,6 @@ class ChatWidget {
             this.sendMessage();
         });
     }
-
 
     setupBroadcastChannel(){
         if("BroadcastChannel" in window){
@@ -427,8 +502,6 @@ class ChatWidget {
                     lang: this.lang,
                     page: window.location.href
                 }),
-
-
             });
             if(!res.ok) throw new Error(`Webhook error: ${res.status}`);
             const data = await res.json();
@@ -469,6 +542,9 @@ class ChatWidget {
         this.hideTooltip();
         this.restoreChatHistory();
         setTimeout(()=> document.getElementById('chatInput')?.focus(), 300);
+
+        // 🔹 Analytics: chat_open
+        this.trackEvent('chat_open');
     }
 
     closeChat(){
@@ -476,6 +552,9 @@ class ChatWidget {
         this.isOpen = false;
         this.lsSet(this.KEY_OPEN,'false');
         this.postChannel({ type:"openState", value:false });
+
+        // 🔹 Analytics: chat_close
+        this.trackEvent('chat_close');
     }
 
     restoreOpenState(){
@@ -625,7 +704,6 @@ class ChatWidget {
         }
     }
 
-
     _enqueueHTMLTokens(str){
         if (!str) return;
         let s = (this._pendingTag || "") + String(str);
@@ -755,12 +833,21 @@ class ChatWidget {
     handleContact(){
         const html=(this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g,"<br>");
         this.addMessage('bot',html);
+
+        // 🔹 contactClicked (via chat CTA)
+        this.trackEvent('contact_clicked', {
+            source: 'chat_cta'
+        });
     }
 
     _renderStreamInto(bubble, rawHTML) {
         const textEl = bubble.querySelector('.chat-widget__message-text');
         if (!textEl) return;
         textEl.innerHTML = this._sanitizeHTML(rawHTML);
+
+        // 🔹 Links in chat-bubble tracken
+        this._attachChatLinkTracking(textEl);
+
         const messages = document.getElementById('chatMessages');
         if (messages) messages.scrollTop = messages.scrollHeight;
         bubble._rawStream = rawHTML;

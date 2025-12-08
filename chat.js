@@ -2,7 +2,17 @@ class ChatWidget {
     constructor(webhookURL, sessionId = null, userId, websiteId, typingOpts = {}) {
         this.lang = typingOpts.lang || "nl";
 
+        // Chat endpoint (LLM / n8n chat workflow)
         this.webhookURL = webhookURL;
+
+        // 🔹 LOS analytics endpoint (n8n analytics workflow)
+        // - via typingOpts.analyticsWebhook instelbaar
+        // - fallback: zelfde als webhookURL als je niks meegeeft
+        this.analyticsWebhookURL =
+            typingOpts.analyticsWebhook ||
+            typingOpts.analyticsWebhookURL ||
+            webhookURL;
+
         // Allow overriding the config webhook from the loader; default to production URL (with trailing "g")
         this.CONFIG_WEBHOOK =
             typingOpts.configWebhook ||
@@ -76,8 +86,13 @@ class ChatWidget {
 
     // ===== Analytics helper =====
     trackEvent(name, data = {}) {
+        // Optioneel: respecteer cookie/analytics consent
+        if (window.dwAnalyticsConsent === false) return;
+
+        const url = this.analyticsWebhookURL || this.webhookURL;
+
         try {
-            fetch(this.webhookURL, {
+            fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 keepalive: true,
@@ -246,7 +261,6 @@ class ChatWidget {
             this._sessionJustCreated = true;
         } else {
             this.lsSet(this.KEY_SESSION_ID, sid);
-            // do NOT overwrite a true flag
             if (this._sessionJustCreated !== true) this._sessionJustCreated = false;
         }
         return sid;
@@ -301,7 +315,7 @@ class ChatWidget {
             window.addEventListener(evt, () => this.lsSet(this.KEY_LAST_SEEN,String(Date.now())), {passive:true})
         );
 
-        // Buttons die een vraag invullen + chat openen
+        // Buttons die een vraag invullen + chat openen (chat="Vraag...")
         document.querySelectorAll("[chat]").forEach(el => {
             el.style.cursor = "pointer";
 
@@ -341,13 +355,11 @@ class ChatWidget {
             const input = document.getElementById("chatInput");
             if (!input) return;
 
-            // Vraag invullen
             input.value = question;
 
             const chatSend = document.getElementById("chatSend");
             if (chatSend) chatSend.disabled = false;
 
-            // ⭐️ Direct versturen
             this.sendMessage();
         });
     }
@@ -475,14 +487,13 @@ class ChatWidget {
             this.lsSet(this.KEY_WELCOME,"true");
         }
     }
+
     applyChatPosition(position) {
         const container = document.getElementById('chatContainer');
         if (!container) return;
 
-        // Remove existing position classes
         container.classList.remove('chat-widget__container--right', 'chat-widget__container--center');
 
-        // Add the appropriate position class
         if (position === 'center') {
             container.classList.add('chat-widget__container--center');
         } else {
@@ -491,7 +502,6 @@ class ChatWidget {
     }
 
     async preloadChatData(){
-        // Always try network first; fall back to cache on failure
         try{
             const res = await fetch(this.CONFIG_WEBHOOK, {
                 method: "POST",
@@ -600,11 +610,7 @@ class ChatWidget {
                     sessionId: this.sessionId,
                     websiteId: this.websiteId,
                     lang: this.lang,
-
-                    // Always send current page
                     page: window.location.href,
-
-                    // Only send clicked question if exists
                     ...(this._chatTriggerMeta ? {
                         question: this._chatTriggerMeta.question
                     } : {})
@@ -834,7 +840,7 @@ class ChatWidget {
         const html=(this?.texts?.cta || this.DEFAULTS.cta_text).replace(/\n/g,"<br>");
         this.addMessage('bot',html);
 
-        // 🔹 contactClicked (via chat CTA)
+        // 🔹 Analytics: contactClicked
         this.trackEvent('contact_clicked', {
             source: 'chat_cta'
         });
